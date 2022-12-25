@@ -1,0 +1,116 @@
+cabal-version:      3.0
+name:               plutus-contract-model-examples
+version:            0.1.0.0
+stability:          experimental
+author:             Dane Bulat
+
+-- A short (one-line) description of the package.
+-- synopsis:
+
+-- A longer description of the package.
+-- description:
+
+-- A URL where users can report bugs.
+-- bug-reports:
+
+
+-- A copyright notice.
+-- copyright:
+-- category:
+-- extra-source-files: CHANGELOG.md
+
+flag defer-plugin-errors
+    description:
+        Defer errors from the plugin, useful for things like Haddock that can't handle it.
+    default: False
+    manual: True
+
+common lang
+    default-language:   Haskell2010
+    ghc-options:
+      -Wall -Wnoncanonical-monad-instances
+      -Wincomplete-uni-patterns -Wincomplete-record-updates
+      -Wredundant-constraints -Widentities -rtsopts
+      -- See Plutus Tx readme
+      -fobject-code -fno-ignore-interface-pragmas -fno-omit-interface-pragmas
+    if flag(defer-plugin-errors)
+        ghc-options: -fplugin-opt PlutusTx.Plugin:defer-errors
+
+library
+    import: lang
+
+    exposed-modules:
+      GuessGame.Game,
+
+    -- Plutus dependencies
+    build-depends:
+      cardano-api, 
+      cardano-ledger-core,
+
+      cardano-node-emulator         >= 1.0.0,
+      freer-extras                  >= 1.0.0,
+      playground-common             >= 1.0.0,
+      plutus-contract               >= 1.0.0,
+      plutus-contract-certification >= 1.0.0,
+      plutus-ledger                 >= 1.0.0,
+      plutus-ledger-constraints     >= 1.0.0,
+      plutus-script-utils           >= 1.0.0,
+
+      plutus-ledger-api             >= 1.0.0,
+      plutus-tx-plugin              >= 1.0.0,
+      plutus-tx                     >= 1.0.0
+
+    if flag(defer-plugin-errors)
+      ghc-options: -fplugin-opt PlutusTx.Plugin:defer-errors
+
+    -- Other depenncies
+    build-depends:
+      base >= 4.9 && < 5,
+      aeson              -any,
+      base16-bytestring, 
+      bytestring         -any,
+      containers         -any,
+      data-default,
+      freer-extras       -any,
+      lens               -any,
+      openapi3,
+      serialise          -any,
+      text               -any
+    hs-source-dirs: src
+
+test-suite tests
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test
+    other-modules:    
+    default-language: Haskell2010
+    ghc-options: -Wall -fobject-code -fno-ignore-interface-pragmas -fno-omit-interface-pragmas
+    build-depends:
+      plutus-contract-model-examples,
+      base                          >= 4.9 && < 5,
+      containers,
+      data-default,
+      freer-extras,
+      lens,
+      QuickCheck,
+      tasty,
+      tasty-hunit,
+      tasty-quickcheck,
+      text,
+
+      cardano-node-emulator         >= 1.0.0,
+      freer-extras                  >= 1.0.0,
+      playground-common             >= 1.0.0,
+      plutus-contract               >= 1.0.0,
+      plutus-contract-certification >= 1.0.0,
+      plutus-ledger                 >= 1.0.0,
+      plutus-ledger-constraints     >= 1.0.0,
+      plutus-script-utils           >= 1.0.0,
+
+      plutus-ledger-api             >= 1.0.0,
+      plutus-tx-plugin              >= 1.0.0,
+      plutus-tx                     >= 1.0.0
+
+    if !(impl(ghcjs) || os(ghcjs))
+       build-depends: plutus-tx-plugin >=1.0.0 
+
