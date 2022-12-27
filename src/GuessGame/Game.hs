@@ -33,7 +33,6 @@
 
 module GuessGame.Game where
 
-import Cardano.Node.Emulator.Params   (testnet)
 import Control.Lens                   (_2, (^?))
 import Data.Aeson                     (FromJSON, ToJSON)
 import Data.ByteString.Char8          qualified as C 
@@ -42,23 +41,29 @@ import Data.Map                       qualified as Map
 import Data.Maybe                     (catMaybes)
 import Data.Text                      qualified as T
 import GHC.Generics                   (Generic)
+
+-- On-chain
+import PlutusTx                       qualified
+import PlutusTx.Prelude               hiding (pure, (<$>))
+import Plutus.V2.Ledger.Api           qualified as LV2
+import Plutus.V2.Ledger.Contexts      qualified as LV2Ctx
+import Plutus.Script.Utils.V2.Typed.Scripts.Validators as V2UtilsTypeScripts
+import Prelude                        qualified as P 
+
+-- Coverage
+import PlutusTx.Code                  (getCovIdx)
+import PlutusTx.Coverage              (CoverageIndex)
+
+-- Off-chain
 import Ledger                         qualified as L
 import Ledger.Ada                     qualified as Ada
+import Ledger.Address                 qualified as V1LAddress
 import Ledger.Constraints             qualified as Constraints 
-import Ledger.Constraints.OffChain    (unbalancedTx)
 import Ledger.Typed.Scripts           qualified as Scripts
 import Ledger.Tx                      qualified as LTx
 import Playground.Contract            (ToSchema)
 import Plutus.Contract                (type (.\/))
 import Plutus.Contract                qualified as PC 
-import Plutus.Script.Utils.Typed      (ScriptContextV1)
-import Plutus.Script.Utils.V1.Address (mkValidatorCardanoAddress)
-import Plutus.V1.Ledger.Scripts       (Datum(Datum), Validator)
-import PlutusTx                       qualified
-import PlutusTx.Code                  (getCovIdx)
-import PlutusTx.Coverage              (CoverageIndex)
-import PlutusTx.Prelude               hiding (pure, (<$>))
-import Prelude                        qualified as P 
 
 -- ---------------------------------------------------------------------- 
 -- Parameter
@@ -66,7 +71,7 @@ import Prelude                        qualified as P
 
 data GameParam = GameParam 
   { gpPayPkh    :: L.PaymentPubKeyHash  -- wallet locking funds 
-  , gpStartTime :: L.POSIXTime         -- starting time of game
+  , gpStartTime :: LV2.POSIXTime         -- starting time of game
   } 
   deriving (P.Show, Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
@@ -111,20 +116,22 @@ instance Scripts.ValidatorTypes Game where
 -- Boilerplate
 -- ---------------------------------------------------------------------- 
 
--- | The address of the game (hash of its validator script)
-gameAddress :: GameParam -> L.CardanoAddress 
-gameAddress = mkValidatorCardanoAddress testnet . gameValidator
+gameInstance :: GameParam -> V2UtilsTypeScripts.TypedValidator Game 
+gameInstance gp = V2UtilsTypeScripts.mkTypedValidator @Game 
+  ($$(PlutusTx.compile [|| mkValidator ||]) `PlutusTx.applyCode` PlutusTx.liftCode gp)
+   $$(PlutusTx.compile [|| wrap ||])
+  where 
+    wrap = V2UtilsTypeScripts.mkUntypedValidator @HashedString @ClearString
 
 -- | The validator script of the game
-gameValidator :: GameParam -> Validator
+gameValidator :: GameParam -> LV2.Validator
 gameValidator = Scripts.validatorScript . gameInstance
 
-gameInstance :: GameParam -> Scripts.TypedValidator Game 
-gameInstance = Scripts.mkTypedValidatorParam @Game 
-  $$(PlutusTx.compile [|| mkValidator ||])
-  $$(PlutusTx.compile [|| wrap ||])
-  where 
-    wrap = Scripts.mkUntypedValidator @L.ScriptContext @HashedString @ClearString
+validatorHash' :: GameParam -> LV2.ValidatorHash 
+validatorHash' = V2UtilsTypeScripts.validatorHash . gameInstance
+
+gameAddress :: GameParam -> L.Address 
+gameAddress = V1LAddress.scriptHashAddress . validatorHash'
 
 -- ---------------------------------------------------------------------- 
 -- Validator script
@@ -134,7 +141,7 @@ gameInstance = Scripts.mkTypedValidatorParam @Game
 -- meant to parameterize the script address.
 
 {-# INLINEABLE mkValidator #-}
-mkValidator :: GameParam -> HashedString -> ClearString -> L.ScriptContext -> Bool 
+mkValidator :: GameParam -> HashedString -> ClearString -> LV2Ctx.ScriptContext -> Bool 
 mkValidator _ hs cs _ = traceIfFalse "incorrect guess" (isGoodGuess hs cs)
 
 {-# INLINEABLE isGoodGuess #-}
@@ -145,7 +152,6 @@ isGoodGuess (HashedString actual) (ClearString guess') = actual == sha2_256 gues
 -- Coverage
 -- ---------------------------------------------------------------------- 
 
--- TODO: Ideas welcome for how to make this interface suck less.
 -- Doing it this way actually generates coverage locations that we don't care about(!) 
 covIdx :: GameParam -> CoverageIndex 
 covIdx gameParam = 
@@ -173,11 +179,14 @@ data GuessArgs = GuessArgs
   deriving stock (P.Show, Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
--- ---------------------------------------------------------------------- 
+-- ======================================================================  
 -- Contract endpoins
+-- ======================================================================  
+
+-- ---------------------------------------------------------------------- 
+-- | The "lock" contract endpoint 
 -- ---------------------------------------------------------------------- 
 
--- | The "lock" contract endpoint 
 lock :: PC.Promise () GameSchema T.Text ()
 lock = PC.endpoint @"lock" $ \LockArgs{laGameParam, laSecret, laValue} -> do 
   PC.logInfo @P.String $ "Pay " <> P.show laValue <> " to the script"
@@ -186,21 +195,30 @@ lock = PC.endpoint @"lock" $ \LockArgs{laGameParam, laSecret, laValue} -> do
     tx      = Constraints.mustPayToTheScriptWithDatumInTx (hashString laSecret) laValue
   PC.mkTxConstraints lookups tx >>= PC.adjustUnbalancedTx >>= PC.yieldUnbalancedTx 
 
+-- ---------------------------------------------------------------------- 
 -- | The "guess" contract endpoint
+-- ---------------------------------------------------------------------- 
+
 guess :: PC.Promise () GameSchema T.Text ()
 guess = PC.endpoint @"guess" $ \GuessArgs{gaGameParam, gaSecret} -> do 
   -- Wait for script to have a UTxO of at least 1 lovelace
   PC.logInfo @P.String "Waiting for script to have a UTxO of at least 1 lovelace"
   utxos <- PC.fundsAtAddressGeq (gameAddress gaGameParam) (Ada.lovelaceValueOf 1) 
   let 
-    lookups  = Constraints.typedValidatorLookups (gameInstance gaGameParam)
-               P.<> Constraints.unspentOutputs utxos
-    redeemer = clearString gaSecret
+    redeemer = clearString gaSecret 
+    lookups  = Constraints.typedValidatorLookups (gameInstance gaGameParam) P.<>
+               Constraints.unspentOutputs utxos
     tx       = Constraints.collectFromTheScript utxos redeemer
+  -- Build a transaction that satisfies the constraints
   unbalancedTx' <- PC.mkTxConstraints lookups tx 
+  -- Take an UnbalancedTx then balance, sign and submit it to the 
+  -- blockchain without returning any results.
   PC.yieldUnbalancedTx unbalancedTx'
 
+-- ---------------------------------------------------------------------- 
 -- | Top-level contract entry point
+-- ---------------------------------------------------------------------- 
+
 contract :: PC.Contract () GameSchema T.Text ()
 contract = do 
   PC.logInfo @P.String "Waiting for lock or guess endpoint"
@@ -228,5 +246,5 @@ findSecretWordValue =
 -- | Extract the secret word in the Datum of a given transaction output output
 secretWordValue :: LTx.DecoratedTxOut -> Maybe HashedString
 secretWordValue o = do 
-  Datum d <- o ^? LTx.decoratedTxOutDatum . _2 . LTx.datumInDatumFromQuery 
+  LV2.Datum d <- o ^? LTx.decoratedTxOutDatum . _2 . LTx.datumInDatumFromQuery 
   PlutusTx.fromBuiltinData d

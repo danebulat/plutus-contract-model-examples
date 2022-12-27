@@ -44,21 +44,24 @@ library
 
     -- Plutus dependencies
     build-depends:
+      playground-common -any,
+      plutus-contract -any,
+      plutus-chain-index-core -any,
+      plutus-ledger -any,
+      plutus-ledger-api -any,
+      plutus-ledger-constraints -any,
+      plutus-tx -any,
+      plutus-tx-plugin -any,
+      plutus-script-utils -any,
       cardano-api, 
+      cardano-binary,
+      data-default,
+
+      -- added
+      cardano-crypto-class,
       cardano-ledger-core,
-
-      cardano-node-emulator         >= 1.0.0,
-      freer-extras                  >= 1.0.0,
-      playground-common             >= 1.0.0,
-      plutus-contract               >= 1.0.0,
-      plutus-contract-certification >= 1.0.0,
-      plutus-ledger                 >= 1.0.0,
-      plutus-ledger-constraints     >= 1.0.0,
-      plutus-script-utils           >= 1.0.0,
-
-      plutus-ledger-api             >= 1.0.0,
-      plutus-tx-plugin              >= 1.0.0,
-      plutus-tx                     >= 1.0.0
+      cardano-ledger-shelley,
+      cardano-wallet-core
 
     if flag(defer-plugin-errors)
       ghc-options: -fplugin-opt PlutusTx.Plugin:defer-errors
@@ -86,8 +89,7 @@ test-suite tests
     default-language: Haskell2010
     ghc-options: -Wall -fobject-code -fno-ignore-interface-pragmas -fno-omit-interface-pragmas
     build-depends:
-      plutus-contract-model-examples,
-      base                          >= 4.9 && < 5,
+      base >= 4.9 && < 5,
       containers,
       data-default,
       freer-extras,
@@ -97,19 +99,24 @@ test-suite tests
       tasty-hunit,
       tasty-quickcheck,
       text,
+      
+      plutus-contract-model-examples,
+      plutus-contract,
+      plutus-ledger,
+      plutus-tx,
 
-      cardano-node-emulator         >= 1.0.0,
-      freer-extras                  >= 1.0.0,
-      playground-common             >= 1.0.0,
-      plutus-contract               >= 1.0.0,
-      plutus-contract-certification >= 1.0.0,
-      plutus-ledger                 >= 1.0.0,
-      plutus-ledger-constraints     >= 1.0.0,
-      plutus-script-utils           >= 1.0.0,
-
-      plutus-ledger-api             >= 1.0.0,
-      plutus-tx-plugin              >= 1.0.0,
-      plutus-tx                     >= 1.0.0
+      -- playground-common -any,
+      -- plutus-contract -any,
+      -- plutus-chain-index-core -any,
+      -- plutus-ledger -any,
+      -- plutus-ledger-api -any,
+      -- plutus-ledger-constraints -any,
+      -- plutus-tx -any,
+      -- plutus-tx-plugin -any,
+      -- plutus-script-utils -any,
+      -- cardano-api, 
+      -- cardano-binary,
+      -- data-default,
 
     if !(impl(ghcjs) || os(ghcjs))
        build-depends: plutus-tx-plugin >=1.0.0 

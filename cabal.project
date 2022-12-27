@@ -26,7 +26,6 @@ source-repository-package
   type: git
   location: https://github.com/input-output-hk/plutus-apps.git
   subdir:
-    cardano-node-emulator
     cardano-streaming
     doc
     freer-extras
@@ -47,7 +46,7 @@ source-repository-package
     plutus-tx-constraints
     plutus-use-cases
     rewindable-index
-  tag: 20ac87dc4d0bd969840168bd84c063f3a6f78887
+  tag: v1.0.0
 
 -- We never, ever, want this.
 write-ghc-environment-files: never
@@ -214,4 +213,3 @@ source-repository-package
       libs/small-steps
       libs/small-steps-test
       libs/non-integral
-
