@@ -40,7 +40,8 @@ library
     import: lang
 
     exposed-modules:
-      GuessGame.Game,
+        GuessGame.Game
+      , GuessGameV2.OnChain
 
     -- Plutus dependencies
     build-depends:

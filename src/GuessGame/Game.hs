@@ -47,7 +47,7 @@ import PlutusTx                       qualified
 import PlutusTx.Prelude               hiding (pure, (<$>))
 import Plutus.V2.Ledger.Api           qualified as LV2
 import Plutus.V2.Ledger.Contexts      qualified as LV2Ctx
-import Plutus.Script.Utils.V2.Typed.Scripts.Validators as V2UtilsTypeScripts
+import Plutus.Script.Utils.V2.Typed.Scripts.Validators qualified as V2UtilsTypeScripts
 import Prelude                        qualified as P 
 
 -- Coverage
