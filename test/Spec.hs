@@ -22,7 +22,8 @@
 
 module Main where 
 
-import Plutus.Contract.Test (Wallet, minLogLevel, w1, w2, w3, mockWalletPaymentPubKeyHash)
+import Plutus.Contract.Test               (Wallet, minLogLevel, w1, w2, w3, 
+                                           mockWalletPaymentPubKeyHash)
 import Plutus.Contract.Test.ContractModel qualified as CM
 import Plutus.Contract                    qualified as PC
 import Plutus.Trace.Emulator              qualified as Trace
@@ -31,7 +32,7 @@ import Ledger.Ada                         qualified as Ada
 import Ledger.Address                     qualified as Address
 import Ledger.Value                       qualified as Value
 import Ledger.Typed.Scripts               qualified as Scripts
-import Cardano.Node.Emulator.TimeSlot     qualified as TimeSlot
+import Ledger.TimeSlot                    qualified as TimeSlot
 
 import Control.Lens                       (makeLenses, set, (^.))
 import Control.Monad                      (when)
