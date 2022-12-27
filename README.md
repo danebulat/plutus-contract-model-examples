@@ -19,13 +19,13 @@ The example contract is built with regular Plutus modules, and **does not use st
 
 ## Running the tests 
 
-Clone the `plutus-apps` repository and checkout commit `20ac87dc4d0bd969840168bd84c063f3a6f78887`.
-The same commit hash is referenced in this project's `cabal.project` file.
+Clone the `plutus-apps` repository and checkout tag `v1.0.0`.
+The same tag is referenced in this project's `cabal.project` file.
 
 ```
 git clone https://github.com/input-output-hk/plutus-apps
 cd plutus-apps
-git checkout 20ac87dc4d0bd969840168bd84c063f3a6f78887
+git checkout v1.0.0 
 ```
 
 Enter a `nix-shell` environment. Make sure to follow the setup instructions provided in
