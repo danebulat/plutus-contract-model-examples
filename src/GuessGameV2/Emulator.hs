@@ -73,14 +73,26 @@ guessToken = V.AssetClass (guessTokenCurrency, guessTokenName)
 
 trace2 :: Emulator.EmulatorTrace () 
 trace2 = do 
-  h2 <- Emulator.activateContractWallet (knownWallet 2) OffChain.contract
+  h1 <- Emulator.activateContractWallet (knownWallet 1) OffChain.contract
 
   {- Scenario 2
-   -> Wallet 2 sends guess token to wallet 1
+   -> Wallet 1 starts a guessing game, deposits 200 ADA
+      Wallet 1 starts with the guess token
+   -> Wallet 1 sends guess token to Wallet 2
    -} 
 
-  Emulator.callEndpoint @"give" h2 $ OffChain.GiveArgs 
-    { OffChain.gvRecipient  = Wallet.mockWalletAddress $ knownWallet 1
+  Emulator.callEndpoint @"lock" h1 $ OffChain.LockArgs
+    { OffChain.laGameParam  = gameParam
+    , OffChain.laSecret     = "secret"
+    , OffChain.laValue      = Ada.lovelaceValueOf 200_000_000
+    , OffChain.laGuessToken = guessToken
+    , OffChain.laRecipient  = Wallet.mockWalletAddress $ knownWallet 1
+    }
+  void $ waitNSlots 2
+
+
+  Emulator.callEndpoint @"give" h1 $ OffChain.GiveArgs 
+    { OffChain.gvRecipient  = Wallet.mockWalletAddress $ knownWallet 2
     , OffChain.gvGuessToken = guessToken 
     }
   void $ waitNSlots 2
@@ -136,4 +148,4 @@ trace1 = do
 -- ---------------------------------------------------------------------- 
 
 test :: IO ()
-test = Emulator.runEmulatorTraceIO' def emCfg trace1 
+test = Emulator.runEmulatorTraceIO' def emCfg trace2 
