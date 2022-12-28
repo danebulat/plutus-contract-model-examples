@@ -135,9 +135,9 @@ getUtxoDatum out = case LV2.txOutDatum out of
 {-# INLINEABLE mkValidator #-}
 mkValidator :: GameParam -> Dat -> Red -> LV2.ScriptContext -> Bool 
 mkValidator _ dat red ctx = case red of 
-  MintToken -> 
-    traceIfFalse "must have one script output" checkNumOutputs &&
-    traceIfFalse "no value being locked"       checkOutputValueNonZero
+  -- MintToken -> 
+  --   traceIfFalse "must have one script output" checkNumOutputs &&
+  --   traceIfFalse "no value being locked"       checkOutputValueNonZero
 
   MakeGuess recipient guess newSecret val -> 
     traceIfFalse "guess token not in output"   (checkRecipientHasToken recipient) &&
@@ -157,8 +157,8 @@ mkValidator _ dat red ctx = case red of
     checkNumOutputs :: Bool 
     checkNumOutputs = length [getOwnOutput] == 1
 
-    checkOutputValueNonZero :: Bool 
-    checkOutputValueNonZero = V.isZero (LV2.txOutValue getOwnOutput)
+    -- checkOutputValueNonZero :: Bool 
+    -- checkOutputValueNonZero = V.isZero (LV2.txOutValue getOwnOutput)
 
     checkGuess :: ClearString -> HashedString -> Bool 
     checkGuess (ClearString guess') (HashedString secret) = 

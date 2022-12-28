@@ -42,6 +42,7 @@ library
     exposed-modules:
         GuessGame.Game
       , GuessGameV2.OnChain
+      , GuessGameV2.OffChain
 
     -- Plutus dependencies
     build-depends:
