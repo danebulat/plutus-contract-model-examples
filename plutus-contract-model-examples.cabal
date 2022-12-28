@@ -43,6 +43,7 @@ library
         GuessGame.Game
       , GuessGameV2.OnChain
       , GuessGameV2.OffChain
+      , GuessGameV2.Emulator
 
     -- Plutus dependencies
     build-depends:

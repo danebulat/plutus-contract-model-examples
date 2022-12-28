@@ -14,12 +14,14 @@
 {-# LANGUAGE TypeFamilies                  #-}
 {-# LANGUAGE TypeOperators                 #-}
 {-# LANGUAGE OverloadedStrings             #-}
+{-# LANGUAGE NumericUnderscores            #-}
 
 {-# OPTIONS_GHC -fno-warn-unused-imports   #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 
 module GuessGameV2.OffChain where
 
+import Control.Monad                  (void)
 import Control.Lens                   (_2, (^?))
 import Data.Aeson                     (FromJSON, ToJSON)
 import Data.ByteString.Char8          qualified as C 
@@ -28,6 +30,7 @@ import Data.Map                       qualified as Map
 import Data.Maybe                     (catMaybes, fromJust)
 import Data.Text                      qualified as T
 import GHC.Generics                   (Generic)
+import Text.Printf                    (printf)
 
 -- On-chain
 import PlutusTx                       qualified
@@ -105,7 +108,7 @@ lock = PC.endpoint @"lock" $ \LockArgs{laGameParam, laSecret, laValue, laGuessTo
   let
     -- construct transaction to produce guessing game
     lookups = Constraints.typedValidatorLookups (OnChain.gameInstance laGameParam)
-    tx      = Constraints.mustPayToTheScriptWithDatumInTx dat laValue
+    tx      = Constraints.mustPayToTheScriptWithInlineDatum dat laValue
   PC.mkTxConstraints lookups tx >>= PC.adjustUnbalancedTx >>= PC.yieldUnbalancedTx 
 
 -- ---------------------------------------------------------------------- 
@@ -115,14 +118,15 @@ lock = PC.endpoint @"lock" $ \LockArgs{laGameParam, laSecret, laValue, laGuessTo
 guess :: PC.Promise () GameSchema T.Text ()
 guess = PC.endpoint @"guess" $ \GuessArgs{gaGameParam, gaGuessTokenTarget, gaOldSecret, 
                                           gaNewSecret, gaValueTakenOut} -> do 
-  -- Wait for script to have a UTxO of at least 1 lovelace
+  pkh <- PC.ownFirstPaymentPubKeyHash
   PC.logInfo @P.String "Waiting for script to have a UTxO of at least 1 lovelace"
   utxos <- PC.fundsAtAddressGeq (OnChain.gameAddress gaGameParam) (Ada.lovelaceValueOf 1) 
   let 
-    -- Get guess token asset class from one of the found utxos
-    dat' = fromJust $ getDatum $ head $ Map.toList utxos
-    guessToken' = getAssetClass (OnChain.datMintingPolicyHash dat') 
-                                (OnChain.datTokenName dat')
+    -- Get guess token asset class from the found script utxo
+    (oref, o) = head $ Map.toList utxos 
+    dat       = fromJust $ getDatum (oref, o) 
+    val       = L._decoratedTxOutValue o
+    guessTn   = getAssetClass dat
   let
     -- Construct redeemer for a MakeGuess action
     redeemer = OnChain.MakeGuess
@@ -130,11 +134,25 @@ guess = PC.endpoint @"guess" $ \GuessArgs{gaGameParam, gaGuessTokenTarget, gaOld
                  (clearString gaOldSecret)   -- the guess
                  (hashString gaNewSecret)    -- next secret
                  gaValueTakenOut             -- value to extract from contract
+
+    -- Construct new datum
+    newDatum = dat{OnChain.datSecret = hashString gaNewSecret}
+    
     -- Construct transaction to consume script output
     lookups  = Constraints.typedValidatorLookups (OnChain.gameInstance gaGameParam) P.<>
-               Constraints.unspentOutputs utxos
-    tx       = Constraints.collectFromTheScript utxos redeemer P.<>
-               Constraints.mustPayToAddress gaGuessTokenTarget (V.assetClassValue guessToken' 1)
+               Constraints.unspentOutputs (Map.singleton oref o)
+    tx       = -- Spend found script utxo 
+              Constraints.mustSpendScriptOutput oref 
+                 (L.Redeemer $ PlutusTx.toBuiltinData redeemer)       P.<>
+               -- Send new datum and calculate new script value 
+               Constraints.mustPayToTheScriptWithInlineDatum newDatum 
+                (minLovelace P.<> val P.<> negate gaValueTakenOut)   P.<>
+               -- Receive funds from script to this wallet
+               Constraints.mustPayToPubKey pkh gaValueTakenOut        P.<>
+               -- Send guess token to new recipient
+               Constraints.mustPayToAddress gaGuessTokenTarget 
+                (V.assetClassValue guessTn 1 P.<> minLovelace)
+
   -- Submit the transaction
   unbalancedTx' <- PC.mkTxConstraints lookups tx 
   PC.yieldUnbalancedTx unbalancedTx'
@@ -154,7 +172,6 @@ contract = do
 
 type TxOutTup = (L.TxOutRef, L.DecoratedTxOut)
 
--- || getDatum
 -- Return the datum of a passed in transaction output
 getDatum :: TxOutTup -> Maybe OnChain.Dat
 getDatum (_, o) = do
@@ -174,12 +191,12 @@ hashString = OnChain.HashedString . sha2_256 . toBuiltin . C.pack
 clearString :: P.String -> OnChain.ClearString
 clearString = OnChain.ClearString . toBuiltin . C.pack
 
--- | Find the secret word in the Datum of the UTxO
+-- Find the secret word in the Datum of the UTxO
 findSecretWordValue :: Map L.TxOutRef LTx.DecoratedTxOut -> Maybe OnChain.HashedString
 findSecretWordValue = 
   listToMaybe . catMaybes . Map.elems . Map.map secretWordValue
 
--- | Extract the secret word in the Datum of a given transaction output output
+-- Extract the secret word in the Datum of a given transaction output output
 secretWordValue :: LTx.DecoratedTxOut -> Maybe OnChain.HashedString
 secretWordValue o = do 
   LV2.Datum d <- o ^? LTx.decoratedTxOutDatum . _2 . LTx.datumInDatumFromQuery 
@@ -189,6 +206,10 @@ getMph:: V.AssetClass -> LV2.MintingPolicyHash
 getMph guessToken = 
   LV2.MintingPolicyHash $ LV2.unCurrencySymbol $ fst $ V.unAssetClass guessToken
 
-getAssetClass :: LV2.MintingPolicyHash -> V.TokenName -> V.AssetClass 
-getAssetClass (LV2.MintingPolicyHash mph) tn = V.AssetClass (LV2.CurrencySymbol mph, tn)
-  
+getAssetClass :: OnChain.Dat -> V.AssetClass 
+getAssetClass d = V.AssetClass (LV2.CurrencySymbol mph, OnChain.datTokenName d)
+  where LV2.MintingPolicyHash mph = OnChain.datMintingPolicyHash d 
+
+minLovelace :: V.Value
+minLovelace = Ada.lovelaceValueOf (Ada.getLovelace  L.minAdaTxOut)
+

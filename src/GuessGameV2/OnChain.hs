@@ -43,6 +43,7 @@ import PlutusTx.Coverage              (CoverageIndex)
 
 -- Off-chain
 import Ledger                         qualified as L
+import Ledger.Ada                     qualified as Ada
 import Ledger.Address                 qualified as V1LAddress
 import Ledger.Typed.Scripts           qualified as Scripts
 import Playground.Contract            (ToSchema)
@@ -119,6 +120,10 @@ instance Scripts.ValidatorTypes Game where
 -- Validator script
 -- ---------------------------------------------------------------------- 
 
+{-# INLINABLE minLovelace #-}
+minLovelace :: V.Value
+minLovelace = Ada.lovelaceValueOf (Ada.getLovelace  L.minAdaTxOut)
+
 {-# INLINABLE getUtxoDatum #-}
 getUtxoDatum :: LV2.TxOut -> Dat 
 getUtxoDatum out = case LV2.txOutDatum out of
@@ -185,7 +190,7 @@ mkValidator _ dat red ctx = case red of
     checkOutputVal val = case LV2Ctx.findOwnInput ctx of 
       Nothing -> traceError "own input not found"
       Just txInInfo -> 
-        LV2.txOutValue (LV2.txInInfoResolved txInInfo) <> negate val == 
+        LV2.txOutValue (LV2.txInInfoResolved txInInfo) <> negate val <> minLovelace == 
         LV2.txOutValue getOwnOutput
 
     checkOutputDatum :: HashedString -> Bool 
