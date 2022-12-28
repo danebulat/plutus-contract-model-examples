@@ -10,7 +10,6 @@
 module GuessGameV2.Emulator where
 
 import Plutus.Trace.Emulator      qualified as Emulator
-import Ledger.TimeSlot            qualified as TimeSlot
 import Data.Default               (Default (..))
 import Data.Map                   qualified as Map
 import Control.Monad.Freer.Extras as Extras
@@ -23,9 +22,9 @@ import Ledger.Ada                 qualified as Ada
 import Ledger.TimeSlot            qualified as TimeSlot
 import Wallet.Emulator.Wallet     (Wallet, knownWallet, mockWalletPaymentPubKeyHash)
 import Wallet.Emulator.Wallet     qualified as Wallet
+
 import GuessGameV2.OffChain       qualified as OffChain
 import GuessGameV2.OnChain        qualified as OnChain
-
 
 -- ---------------------------------------------------------------------- 
 -- Configuration
@@ -36,7 +35,7 @@ emCfg :: Emulator.EmulatorConfig
 emCfg = def {
   Emulator._initialChainState = Left $ Map.fromList
     [ (w1, v)
-    , (w2, v <> V.assetClassValue guessToken 1)
+    , (w2, v)
     , (w3, v)
     ]
   }
@@ -60,7 +59,7 @@ gameParam = OnChain.GameParam
   }
 
 guessTokenCurrency :: LV2.CurrencySymbol
-guessTokenCurrency = "b89bbdd6b7e801b90fbd3a249f462fb049d43dd7a87d74a71cc97369"
+guessTokenCurrency = OnChain.freeCurSymbol
 
 guessTokenName :: LV2.TokenName 
 guessTokenName = "GUESS TOKEN"
@@ -110,6 +109,7 @@ trace1 = do
     , OffChain.laSecret     = "secret"
     , OffChain.laValue      = Ada.lovelaceValueOf 200_000_000
     , OffChain.laGuessToken = guessToken
+    , OffChain.laRecipient  = Wallet.mockWalletAddress $ knownWallet 2
     }
   void $ waitNSlots 2
 
@@ -136,4 +136,4 @@ trace1 = do
 -- ---------------------------------------------------------------------- 
 
 test :: IO ()
-test = Emulator.runEmulatorTraceIO' def emCfg trace2 
+test = Emulator.runEmulatorTraceIO' def emCfg trace1 

@@ -72,6 +72,7 @@ data LockArgs = LockArgs
   , laSecret     :: !P.String                 -- initial secret for contract 
   , laValue      :: !LV2.Value                -- value to lock to contract
   , laGuessToken :: !V.AssetClass             -- guess token asset class
+  , laRecipient  :: !L.Address                -- first recipient of guess token
   } 
   deriving stock (P.Show, Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
@@ -117,19 +118,28 @@ give = PC.endpoint @"give" $ \GiveArgs{gvRecipient, gvGuessToken} -> do
 -- ---------------------------------------------------------------------- 
 
 lock :: PC.Promise () GameSchema T.Text ()
-lock = PC.endpoint @"lock" $ \LockArgs{laGameParam, laSecret, laValue, laGuessToken} -> do 
+lock = PC.endpoint @"lock" $ \LockArgs{laGameParam, laSecret, laValue, laGuessToken, laRecipient} -> do 
   PC.logInfo @P.String $ "Pay " <> P.show laValue <> " to the script"
   let 
+    mph = getMph laGuessToken
+    tn  = snd $ V.unAssetClass laGuessToken
+    val = V.singleton OnChain.freeCurSymbol tn 1
+
     -- Construct datum for contract
     dat = OnChain.Dat { 
-            OnChain.datMintingPolicyHash = getMph laGuessToken,
-            OnChain.datTokenName         = snd $ V.unAssetClass laGuessToken,
+            OnChain.datMintingPolicyHash = mph,
+            OnChain.datTokenName         = tn,
             OnChain.datSecret            = hashString laSecret
           }
   let
-    -- Construct transaction to produce guessing game
-    lookups = Constraints.typedValidatorLookups (OnChain.gameInstance laGameParam)
-    tx      = Constraints.mustPayToTheScriptWithInlineDatum dat laValue
+    -- Construct transaction to produce script utxo and mint guess token
+    lookups = Constraints.typedValidatorLookups (OnChain.gameInstance laGameParam) P.<> 
+              Constraints.plutusV2MintingPolicy OnChain.freePolicy 
+    
+    tx      = Constraints.mustPayToTheScriptWithInlineDatum dat laValue P.<>
+              Constraints.mustMintValue val P.<>
+              Constraints.mustPayToAddress laRecipient (V.assetClassValue laGuessToken 1) 
+
   PC.mkTxConstraints lookups tx >>= PC.adjustUnbalancedTx >>= PC.yieldUnbalancedTx 
 
 -- ---------------------------------------------------------------------- 
@@ -148,7 +158,7 @@ guess = PC.endpoint @"guess" $ \GuessArgs{gaGameParam, gaGuessTokenTarget, gaOld
     dat       = fromJust $ getDatum (oref, o) 
     val       = L._decoratedTxOutValue o
     guessTn   = getAssetClass dat
-  let
+
     -- Construct redeemer for a MakeGuess action
     redeemer = OnChain.MakeGuess
                  gaGuessTokenTarget          -- next recipient of guess token
@@ -158,7 +168,7 @@ guess = PC.endpoint @"guess" $ \GuessArgs{gaGameParam, gaGuessTokenTarget, gaOld
 
     -- Construct new datum
     newDatum = dat{OnChain.datSecret = hashString gaNewSecret}
-    
+     
     -- Construct transaction to consume script output
     lookups  = Constraints.typedValidatorLookups (OnChain.gameInstance gaGameParam) P.<>
                Constraints.unspentOutputs (Map.singleton oref o)

@@ -35,8 +35,11 @@ import Plutus.V2.Ledger.Api           qualified as LV2
 import Plutus.V2.Ledger.Contexts      qualified as LV2Ctx
 import Plutus.V1.Ledger.Value         qualified as V
 import Prelude                        qualified as P 
-import Plutus.Script.Utils.V2.Typed.Scripts.Validators qualified as V2UtilsTypeScripts
 
+import Plutus.Script.Utils.V2.Typed.Scripts.Validators qualified as V2UtilsTypeScripts
+import Plutus.Script.Utils.V2.Typed.Scripts            qualified as Scripts
+import Plutus.Script.Utils.V2.Scripts                  (scriptCurrencySymbol)
+--
 -- Coverage
 import PlutusTx.Code                  (getCovIdx)
 import PlutusTx.Coverage              (CoverageIndex)
@@ -45,7 +48,6 @@ import PlutusTx.Coverage              (CoverageIndex)
 import Ledger                         qualified as L
 import Ledger.Ada                     qualified as Ada
 import Ledger.Address                 qualified as V1LAddress
-import Ledger.Typed.Scripts           qualified as Scripts
 import Playground.Contract            (ToSchema)
 
 -- ---------------------------------------------------------------------- 
@@ -229,3 +231,53 @@ covIdx gameParam =
   getCovIdx ($$(PlutusTx.compile [|| mkValidator ||]) 
                `PlutusTx.applyCode` PlutusTx.liftCode gameParam)
 
+-- ---------------------------------------------------------------------- 
+-- Free policy script
+-- ---------------------------------------------------------------------- 
+
+{-# INLINEABLE mkFreePolicy #-}
+mkFreePolicy :: () -> LV2Ctx.ScriptContext -> Bool
+mkFreePolicy () _ = True
+
+freePolicy :: Scripts.MintingPolicy
+freePolicy = LV2.mkMintingPolicyScript
+  $$(PlutusTx.compile [|| Scripts.mkUntypedMintingPolicy mkFreePolicy ||])
+
+freeCurSymbol :: LV2.CurrencySymbol
+freeCurSymbol = scriptCurrencySymbol freePolicy
+
+-- ---------------------------------------------------------------------- 
+-- NFT policy script
+-- ---------------------------------------------------------------------- 
+
+{-# INLINEABLE mkNftPolicy #-}
+mkNftPolicy :: LV2.TxOutRef -> LV2.TokenName -> () -> LV2Ctx.ScriptContext -> Bool 
+mkNftPolicy oref tn () ctx = 
+  traceIfFalse "utxo not consumed"   hasUtxo &&
+  traceIfFalse "wrong amount minted" checkMintedAmount
+  where
+    txInfo :: LV2.TxInfo 
+    txInfo = LV2.scriptContextTxInfo ctx 
+
+    hasUtxo :: Bool 
+    hasUtxo = any (\i -> LV2.txInInfoOutRef i == oref) (LV2.txInfoInputs txInfo)
+
+    checkMintedAmount :: Bool 
+    checkMintedAmount = case V.flattenValue (LV2.txInfoMint txInfo) of 
+      [(_, tn', amt')] -> tn' == tn && amt' == 1 
+      _ -> False
+ 
+nftPolicy :: LV2.TxOutRef -> LV2.TokenName -> LV2.MintingPolicy 
+nftPolicy oref tn = LV2.mkMintingPolicyScript $
+  $$(PlutusTx.compile [|| \oref' tn' -> Scripts.mkUntypedMintingPolicy (mkNftPolicy oref' tn') ||])
+  `PlutusTx.applyCode` PlutusTx.liftCode oref 
+  `PlutusTx.applyCode` PlutusTx.liftCode tn
+
+nftCurSymbol :: LV2.TxOutRef -> LV2.TokenName -> LV2.CurrencySymbol
+nftCurSymbol oref tn = scriptCurrencySymbol $ nftPolicy oref tn 
+
+nftPolicyScript :: LV2.TxOutRef -> LV2.TokenName -> LV2.Script 
+nftPolicyScript oref tn = LV2.unMintingPolicyScript $ nftPolicy oref tn
+
+nftMintValidator :: LV2.TxOutRef -> LV2.TokenName -> LV2.Validator
+nftMintValidator oref tn = LV2.Validator $ nftPolicyScript oref tn
