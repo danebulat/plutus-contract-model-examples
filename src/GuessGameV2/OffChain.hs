@@ -138,7 +138,8 @@ lock = PC.endpoint @"lock" $ \LockArgs{laGameParam, laSecret, laValue, laGuessTo
     
     tx      = Constraints.mustPayToTheScriptWithInlineDatum dat laValue P.<>
               Constraints.mustMintValue val P.<>
-              Constraints.mustPayToAddress laRecipient (V.assetClassValue laGuessToken 1) 
+              Constraints.mustPayToAddress laRecipient 
+                (V.assetClassValue laGuessToken 1 <> minLovelace) 
 
   PC.mkTxConstraints lookups tx >>= PC.adjustUnbalancedTx >>= PC.yieldUnbalancedTx 
 

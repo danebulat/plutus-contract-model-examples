@@ -171,18 +171,18 @@ mkValidator _ dat red ctx = case red of
     checkGuess (ClearString guess') (HashedString secret) = 
       sha2_256 guess' == secret
 
-    getOutputPaidToRecipient :: L.Address -> LV2.TxOut 
+    getOutputPaidToRecipient :: L.Address -> V.Value
     getOutputPaidToRecipient r = 
        case filter ((== r) . LV2.txOutAddress) $ LV2.txInfoOutputs txInfo of
-        [o] -> o 
-        _   -> traceError "invalid recipient output"
+        [] -> traceError "invalid recipient output"
+        xs -> foldr (\o acc -> acc <> LV2.txOutValue o) (Ada.lovelaceValueOf 0) xs
 
     checkRecipientHasToken :: L.Address -> Bool 
     checkRecipientHasToken r = (== 1) $ V.assetClassValueOf val
       (V.AssetClass (curSym, datTokenName dat))
       where 
        curSym = mintingPolicyHashToCurySym (datMintingPolicyHash dat)
-       val    = LV2.txOutValue $ getOutputPaidToRecipient r
+       val    = getOutputPaidToRecipient r
 
     mintingPolicyHashToCurySym :: LV2.MintingPolicyHash -> LV2.CurrencySymbol 
     mintingPolicyHashToCurySym (LV2.MintingPolicyHash mph) =
