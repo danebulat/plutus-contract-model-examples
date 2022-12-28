@@ -14,7 +14,6 @@
 {-# LANGUAGE TypeFamilies                  #-}
 {-# LANGUAGE TypeOperators                 #-}
 {-# LANGUAGE OverloadedStrings             #-}
-{-# LANGUAGE NumericUnderscores            #-}
 
 {-# OPTIONS_GHC -fno-warn-unused-imports   #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
@@ -61,6 +60,7 @@ import GuessGameV2.OnChain            qualified as OnChain
 type GameSchema =
         PC.Endpoint "lock"  LockArgs 
     .\/ PC.Endpoint "guess" GuessArgs
+    .\/ PC.Endpoint "give"  GiveArgs
 
 -- ---------------------------------------------------------------------- 
 -- Data types for contract arguments
@@ -68,10 +68,10 @@ type GameSchema =
 
 -- | Arguments for the @"lock"@ endpoint
 data LockArgs = LockArgs 
-  { laGameParam  :: !OnChain.GameParam      -- for parameterizing the validator
-  , laSecret     :: !P.String               -- initial secret for contract 
-  , laValue      :: !LV2.Value              -- value to lock to contract
-  , laGuessToken :: !V.AssetClass           -- guess token asset class
+  { laGameParam  :: !OnChain.GameParam        -- for parameterizing the validator
+  , laSecret     :: !P.String                 -- initial secret for contract 
+  , laValue      :: !LV2.Value                -- value to lock to contract
+  , laGuessToken :: !V.AssetClass             -- guess token asset class
   } 
   deriving stock (P.Show, Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
@@ -87,9 +87,30 @@ data GuessArgs = GuessArgs
   deriving stock (P.Show, Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
+-- | Arguments for the @"give" endpoint
+data GiveArgs = GiveArgs 
+  { gvRecipient  :: !L.Address                  -- recipient of guess token
+  , gvGuessToken :: !V.AssetClass 
+  }
+  deriving stock (P.Show, Generic)
+  deriving anyclass (ToJSON, FromJSON, ToSchema)
+
 -- ====================================================================== 
 -- Contract endpoins
 -- ====================================================================== 
+
+-- ---------------------------------------------------------------------- 
+-- The "give" contract endpoint 
+-- ---------------------------------------------------------------------- 
+
+give :: PC.Promise () GameSchema T.Text () 
+give = PC.endpoint @"give" $ \GiveArgs{gvRecipient, gvGuessToken} -> do 
+  PC.logInfo @P.String $ printf "Sending guess token to %s" (P.show gvRecipient)
+  let 
+    val = V.assetClassValue gvGuessToken 1 P.<> minLovelace
+    tx  = Constraints.mustPayToAddress gvRecipient val
+  ledgerTx <- PC.submitTx tx
+  void $ PC.awaitTxConfirmed (L.getCardanoTxId ledgerTx)
 
 -- ---------------------------------------------------------------------- 
 -- The "lock" contract endpoint 
@@ -99,14 +120,14 @@ lock :: PC.Promise () GameSchema T.Text ()
 lock = PC.endpoint @"lock" $ \LockArgs{laGameParam, laSecret, laValue, laGuessToken} -> do 
   PC.logInfo @P.String $ "Pay " <> P.show laValue <> " to the script"
   let 
-    -- construct datum for contract
+    -- Construct datum for contract
     dat = OnChain.Dat { 
             OnChain.datMintingPolicyHash = getMph laGuessToken,
             OnChain.datTokenName         = snd $ V.unAssetClass laGuessToken,
             OnChain.datSecret            = hashString laSecret
           }
   let
-    -- construct transaction to produce guessing game
+    -- Construct transaction to produce guessing game
     lookups = Constraints.typedValidatorLookups (OnChain.gameInstance laGameParam)
     tx      = Constraints.mustPayToTheScriptWithInlineDatum dat laValue
   PC.mkTxConstraints lookups tx >>= PC.adjustUnbalancedTx >>= PC.yieldUnbalancedTx 
@@ -142,11 +163,11 @@ guess = PC.endpoint @"guess" $ \GuessArgs{gaGameParam, gaGuessTokenTarget, gaOld
     lookups  = Constraints.typedValidatorLookups (OnChain.gameInstance gaGameParam) P.<>
                Constraints.unspentOutputs (Map.singleton oref o)
     tx       = -- Spend found script utxo 
-              Constraints.mustSpendScriptOutput oref 
+               Constraints.mustSpendScriptOutput oref 
                  (L.Redeemer $ PlutusTx.toBuiltinData redeemer)       P.<>
                -- Send new datum and calculate new script value 
                Constraints.mustPayToTheScriptWithInlineDatum newDatum 
-                (minLovelace P.<> val P.<> negate gaValueTakenOut)   P.<>
+                (minLovelace P.<> val P.<> negate gaValueTakenOut)    P.<>
                -- Receive funds from script to this wallet
                Constraints.mustPayToPubKey pkh gaValueTakenOut        P.<>
                -- Send guess token to new recipient
@@ -164,7 +185,7 @@ guess = PC.endpoint @"guess" $ \GuessArgs{gaGameParam, gaGuessTokenTarget, gaOld
 contract :: PC.Contract () GameSchema T.Text ()
 contract = do 
   PC.logInfo @P.String "Waiting for lock or guess endpoint"
-  PC.selectList [lock, guess] >> contract
+  PC.selectList [lock, guess, give] >> contract
 
 -- ---------------------------------------------------------------------- 
 -- Helper functions
