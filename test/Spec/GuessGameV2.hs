@@ -20,7 +20,11 @@
 {-# OPTIONS_GHC -fno-warn-unused-imports   #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 
-module Spec.GuessGameV2 where 
+module Spec.GuessGameV2 
+  ( testsIO
+  , testsIO'
+  , tests
+  ) where 
 
 import Plutus.Contract.Test               (Wallet, minLogLevel, mockWalletPaymentPubKeyHash, 
                                            mockWalletAddress)
@@ -376,8 +380,13 @@ prop_Game' l = CM.propRunActionsWithOptions
 -- Main
 -- ---------------------------------------------------------------------- 
 
-main :: IO ()
-main = quickCheck prop_Game 
+-- Output test results at the end
+testsIO :: IO ()
+testsIO = quickCheck prop_Game 
 
-main' :: IO () 
-main' = verboseCheck prop_Game
+-- Output each test and the final results
+testsIO' :: IO () 
+testsIO' = verboseCheck prop_Game
+
+tests :: TestTree 
+tests = testProperty "guess game v2 model" prop_Game
