@@ -24,7 +24,7 @@ module Spec.GuessGameV2 where
 
 import Plutus.Contract.Test               (Wallet, minLogLevel, mockWalletPaymentPubKeyHash, 
                                            mockWalletAddress)
-import Plutus.Contract.Test               qualified as CT (w1, w2, w3)
+import Plutus.Contract.Test               qualified as CT 
 import Plutus.Contract.Test.ContractModel qualified as CM
 import Plutus.Contract                    qualified as PC
 import Plutus.Trace.Emulator              qualified as Trace
@@ -106,11 +106,10 @@ instance CM.ContractModel GameModel where
   -- Generate random data for each action.
   -- This data is passed to the contract endpoints (off-chain code) 
   arbitraryAction :: CM.ModelState GameModel -> Gen (CM.Action GameModel)
-  arbitraryAction _ = oneof 
-    [ Lock  <$> genWallet <*> genWallet <*> genGuess <*> genValue 
-    , Give  <$> genWallet <*> genWallet 
-    , Guess <$> genWallet <*> genWallet <*> genGuess <*> genGuess <*> genValue 
-    ]
+  arbitraryAction _ = frequency 
+    [ (2,  Lock  <$> genWallet <*> genWallet <*> genGuess <*> genLargeValueInRange)
+    , (5,  Give  <$> genWallet <*> genWallet)
+    , (14, Guess <$> genWallet <*> genWallet <*> genGuess <*> genGuess <*> genSmallValueInRange)]
 
   -- ----------------------
   -- MODELLING EXPECTATIONS
@@ -154,10 +153,6 @@ instance CM.ContractModel GameModel where
     correctGuess <- (guess ==) <$> CM.viewContractState currentSecret
     if correctGuess 
       then do 
-        -- TODO: Add min lovelace to script balance when guess processed
-        let minLove = Ada.getLovelace $ Ada.fromValue minLovelace
-            threeMinLove = minLovelace <> minLovelace <> minLovelace
-        
         gameValue     CM.$~ subtract valToExtract
         currentSecret CM.$= newSecret
         tokenHolder   CM.$= Just w2
@@ -177,9 +172,8 @@ instance CM.ContractModel GameModel where
   -- Define whether an action can run or not, based on the current state 
   precondition :: CM.ModelState GameModel -> CM.Action GameModel -> Bool 
   precondition s cmd = case cmd of 
-      Lock  _ _ _ v -> 
-        count == 0 && 
-        v >= minLove
+      Lock  w1 w2 _ v -> 
+           count == 0 && w1 /= w2 && v >= minLove
 
       Guess w1 w2 _ _ valToExtract -> 
         count > 0 && 
@@ -310,10 +304,16 @@ genWallet :: Gen Wallet
 genWallet = elements wallets
 
 genGuess :: Gen String
-genGuess = elements ["hello", "secret", "cardano22", "goodbye"]
+genGuess = elements ["hello", "secret", "cardano", "goodbye"]
 
 genValue :: Gen Integer
 genValue = getNonNegative <$> arbitrary
+
+genLargeValueInRange :: Gen Integer 
+genLargeValueInRange = choose (75_000_000, 90_000_000)
+
+genSmallValueInRange :: Gen Integer 
+genSmallValueInRange = choose (2_000_000, 10_000_000)
 
 -- ---------------------------------------------------------------------- 
 -- QuickCheck functions
@@ -364,3 +364,20 @@ testGuess3 = withMaxSuccess 1 . prop_Game $
 -- end of each test to be customized.
 prop_Game :: CM.Actions GameModel -> Property
 prop_Game = CM.propRunActions_ 
+
+-- Eliminate INFO messages. Ie. quickCheck $ prop_Game' Warning 
+prop_Game' :: LogLevel -> CM.Actions GameModel -> Property 
+prop_Game' l = CM.propRunActionsWithOptions
+                  (set minLogLevel l CM.defaultCheckOptionsContractModel)
+                  CM.defaultCoverageOptions
+                  (\_ -> pure True)
+
+-- ---------------------------------------------------------------------- 
+-- Main
+-- ---------------------------------------------------------------------- 
+
+main :: IO ()
+main = quickCheck prop_Game 
+
+main' :: IO () 
+main' = verboseCheck prop_Game
