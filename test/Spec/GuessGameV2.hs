@@ -20,11 +20,11 @@
 {-# OPTIONS_GHC -fno-warn-unused-imports   #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
 
-module Spec.GuessGameV2 
-  ( testsIO
-  , testsIO'
-  , tests
-  ) where 
+module Spec.GuessGameV2 where
+--  ( testsIO
+--  , testsIO'
+--  , tests
+--  ) where 
 
 import Plutus.Contract.Test               (Wallet, minLogLevel, mockWalletPaymentPubKeyHash, 
                                            mockWalletAddress)
@@ -177,7 +177,7 @@ instance CM.ContractModel GameModel where
   precondition :: CM.ModelState GameModel -> CM.Action GameModel -> Bool 
   precondition s cmd = case cmd of 
       Lock  w1 w2 _ v -> 
-           count == 0 && w1 /= w2 && v >= minLove
+        count == 0 && w1 /= w2 && v >= minLove
 
       Guess w1 w2 _ _ valToExtract -> 
         count > 0 && 
@@ -269,6 +269,28 @@ instance CM.ContractModel GameModel where
     [Guess w1 w'' old new val  | w''  <- shrinkWallet w2] ++
     [Guess w1 w2  old new val' | val' <- shrink val]
 
+  -- ----------
+  -- MONITORING
+  -- ----------
+
+  -- Called for every Action in a test case. 
+  -- Takes model state before and after the action.
+  --
+  -- Result is a function that is applied to the property being tested. Can use 
+  -- any of the QuickCheck functions for analysing test case distribution or 
+  -- adding output to counter examples.
+
+  monitoring 
+      :: (CM.ModelState GameModel, CM.ModelState GameModel) 
+      -> CM.Action GameModel 
+      -> Property 
+      -> Property
+  monitoring (s, _) (Guess _ _ guess _ _) = 
+      tabulate "Guesses" [if guess == secret then "Right" else "Wrong"]
+    where 
+      secret = s ^. CM.contractState . currentSecret
+  monitoring _ _ = id
+
 deriving instance Eq (CM.ContractInstanceKey GameModel w s e params)
 deriving instance Show (CM.ContractInstanceKey GameModel w s e params)
 
@@ -304,11 +326,14 @@ minLovelace = Ada.lovelaceValueOf (Ada.getLovelace  L.minAdaTxOut)
 -- Generators (for actions)
 -- ---------------------------------------------------------------------- 
 
+guesses :: [String]
+guesses = ["hello", "secret", "cardano", "goodbye"]
+
 genWallet :: Gen Wallet 
 genWallet = elements wallets
 
 genGuess :: Gen String
-genGuess = elements ["hello", "secret", "cardano", "goodbye"]
+genGuess = elements guesses
 
 genValue :: Gen Integer
 genValue = getNonNegative <$> arbitrary
@@ -390,3 +415,60 @@ testsIO' = verboseCheck prop_Game
 
 tests :: TestTree 
 tests = testProperty "guess game v2 model" prop_Game
+
+-- ---------------------------------------------------------------------- 
+-- Dynamic Logic
+-- ---------------------------------------------------------------------- 
+
+-- A convenient way to define unit tests for a contract specified by a `ContractModel`.
+unitTest :: CM.DL GameModel ()
+unitTest = do 
+  CM.action $ Lock CT.w1 CT.w2 "hello" 2_000_000
+  CM.action $ Give CT.w2 CT.w3
+  CM.action $ Guess CT.w3 CT.w2 "hello" "new secret" 1_500_000
+
+--  Run the test by specifying a QuickCheck property
+-- `forAllDL` generates a test sequence from the `dl` provided, and runs it 
+--  using the same underlying property as before.
+propDL :: CM.DL GameModel () -> Property 
+propDL dl = CM.forAllDL dl prop_Game
+
+-- Can add random generation in the `DL` monad and use quantifiers.
+unitTest2 :: CM.DL GameModel () 
+unitTest2 = do 
+  val <- CM.forAllQ $ CM.chooseQ (2_000_000, 2_500_000) 
+  CM.action $ Lock CT.w1 CT.w2 "hello" val
+  CM.action $ Give CT.w2 CT.w3 
+  CM.action $ Guess CT.w3 CT.w2 "hello" "new secret" 2_000_000
+
+--  Can include a random sequence of actions.
+--  Assert that, after any sequence of actions, no funds should remain locked.
+-- `CM.lockedValue` extracts the total value locked in contracts from the `CM.ModelState`.
+noLockedFunds :: CM.DL GameModel ()
+noLockedFunds = do 
+  -- Make sure as least min lovelace is stored in Lock action
+  v   <- CM.forAllQ $ CM.chooseQ (4_000_000, 48_000_000) 
+  g   <- CM.forAllQ $ CM.elementsQ guesses 
+  w1' <- CM.forAllQ $ CM.elementsQ wallets 
+  w2' <- CM.forAllQ $ CM.elementsQ (filter (/= w1') wallets)
+  CM.action $ Lock w1' w2' g v
+
+  -- Perform an arbitrary number of random actions
+  CM.anyActions_ 
+
+  -- If there's funds locked, make a correct guess
+  secret <- CM.viewContractState currentSecret 
+  val    <- CM.viewContractState gameValue
+  when (val > 0) $ do 
+    holder <- fromJust <$> CM.viewContractState tokenHolder
+    CM.monitor $ label "Unlocking funds"
+    w1 <- CM.forAllQ $ CM.elementsQ (filter (/=holder) wallets)
+    CM.action $ Guess holder w1 secret "hello" val
+
+  -- Locked funds should be zero
+  CM.assertModel "Locked funds should be zero" (\s -> 
+    (s ^. CM.contractState . gameValue) == 0)
+
+runDL :: IO ()
+runDL = quickCheck . withMaxSuccess 1 $ propDL noLockedFunds
+
