@@ -44,6 +44,7 @@ library
       , GuessGameV2.OnChain
       , GuessGameV2.OffChain
       , GuessGameV2.Emulator
+      , Escrow.OnChain
 
     -- Plutus dependencies
     build-depends:
