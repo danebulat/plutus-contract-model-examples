@@ -64,35 +64,6 @@ import Plutus.Contract.Constraints        qualified as Constraints
 import Plutus.Contract.Test.ContractModel qualified as CM
 
 -- ---------------------------------------------------------------------- 
--- Schema
--- ---------------------------------------------------------------------- 
-
-type EscrowSchema = 
-      PC.Endpoint "pay-escrow" V.Value 
-  .\/ PC.Endpoint "redeem-escrow" ()
-  .\/ PC.Endpoint "refund-escrow" ()
-
--- ---------------------------------------------------------------------- 
--- Error Type
--- ---------------------------------------------------------------------- 
-
-data RedeemFailReason = DeadlinePassed | NotEnoughFundsAtAddress
-  deriving stock (P.Eq, P.Show, Generic)
-  deriving anyclass (ToJSON, FromJSON)
-
-data EscrowError = 
-    RedeemFailed RedeemFailReason 
-  | RefundFailed 
-  | EContractError PC.ContractError
-  deriving stock (P.Show, Generic)
-  deriving anyclass (ToJSON, FromJSON)
-
-makeClassyPrisms ''EscrowError
-
-instance PC.AsContractError EscrowError where 
-  _ContractError = _EContractError
-
--- ---------------------------------------------------------------------- 
 -- Data Types
 -- ---------------------------------------------------------------------- 
 
@@ -110,7 +81,7 @@ PlutusTx.makeLift ''EscrowTarget
 payToPubKeyTarget :: L.PaymentPubKeyHash -> V.Value -> EscrowTarget d
 payToPubKeyTarget = PaymentPubKeyTarget
 
--- | An 'EscrowTarget' that pays the value to a script address, with the given data script.
+-- | An 'EscrowTarget' that pays the value to a script address, with the given datum.
 payToScriptTarget :: LV2.ValidatorHash -> LV2.Datum -> V.Value -> EscrowTarget LV2.Datum 
 payToScriptTarget = ScriptTarget
 
@@ -119,8 +90,7 @@ payToScriptTarget = ScriptTarget
 -- ---------------------------------------------------------------------- 
 
 -- | Definition of an escrow contract, consisting of a deadline and a list of targets
-data EscrowParams d = 
-  EscrowParams 
+data EscrowParams d = EscrowParams 
     { escrowDeadline :: LV2.POSIXTime
     -- ^ Latest point at which the outputs may be spent.
     , escrowTargets  :: [EscrowTarget d]
@@ -212,7 +182,6 @@ validate EscrowParams{escrowDeadline, escrowTargets} contributor action
     Refund -> 
          traceIfFalse "escrowDeadline-before" ((escrowDeadline - 1) `I.before` LV2.txInfoValidRange scriptContextTxInfo)
       && traceIfFalse "txSignedBy" (scriptContextTxInfo `LV2Ctx.txSignedBy` L.unPaymentPubKeyHash contributor)
-
 
 -- ---------------------------------------------------------------------- 
 -- Boilerplate
