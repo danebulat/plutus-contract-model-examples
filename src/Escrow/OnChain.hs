@@ -21,7 +21,6 @@
 {-# LANGUAGE ViewPatterns                  #-}
 {-# LANGUAGE UndecidableInstances          #-}
 {-# LANGUAGE OverloadedStrings             #-}
-{-# LANGUAGE LambdaCase                    #-}
 
 {-# OPTIONS_GHC -fno-warn-unused-imports                     #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns                   #-}
@@ -67,57 +66,45 @@ import Plutus.Contract.Test.ContractModel qualified as CM
 -- Data Types
 -- ---------------------------------------------------------------------- 
 
--- | Defines where the money should go. Usually we have `d = Datum` (when
---   defining `EscrowTarget` values in off-chain code). Sometimes we have
---  `d = DatumHash` (when checking the hashes in on-chain code)
-data EscrowTarget d = 
+data EscrowTarget = 
     PaymentPubKeyTarget L.PaymentPubKeyHash V.Value  -- pay to pub key 
-  | ScriptTarget        LV2.ValidatorHash d V.Value  -- pay to script
-  deriving (P.Functor)
 
 PlutusTx.makeLift ''EscrowTarget
-
--- | An 'EscrowTarget' that pays the value to a public key address.
-payToPubKeyTarget :: L.PaymentPubKeyHash -> V.Value -> EscrowTarget d
-payToPubKeyTarget = PaymentPubKeyTarget
-
--- | An 'EscrowTarget' that pays the value to a script address, with the given datum.
-payToScriptTarget :: LV2.ValidatorHash -> LV2.Datum -> V.Value -> EscrowTarget LV2.Datum 
-payToScriptTarget = ScriptTarget
 
 -- ---------------------------------------------------------------------- 
 -- Parameter
 -- ---------------------------------------------------------------------- 
 
 -- | Definition of an escrow contract, consisting of a deadline and a list of targets
-data EscrowParams d = EscrowParams 
+data EscrowParams = EscrowParams 
     { escrowDeadline :: LV2.POSIXTime
     -- ^ Latest point at which the outputs may be spent.
-    , escrowTargets  :: [EscrowTarget d]
+    , escrowTargets  :: [EscrowTarget]
     -- ^ Where the money should go. For each target, the contract checks that 
     --   the output `mkTxOutput` of the target is present in the spending tx.
-    } deriving (P.Functor)
+    } 
 
 PlutusTx.makeLift ''EscrowParams
 
+-- ---------------------------------------------------------------------- 
+-- Utility Functions
+-- ---------------------------------------------------------------------- 
+
+-- | An 'EscrowTarget' that pays the value to a public key address.
+payToPubKeyTarget :: L.PaymentPubKeyHash -> V.Value -> EscrowTarget
+payToPubKeyTarget = PaymentPubKeyTarget
+
 -- | The total 'Value' that must be paid into the escrow contract before it can be unlocked
-targetTotal :: EscrowParams d -> V.Value 
+targetTotal :: EscrowParams -> V.Value 
 targetTotal = P.foldr (\tgt vl -> vl + targetValue tgt) mempty . escrowTargets
 
 -- | The 'Value' specified by an 'EscrowTarget'
-targetValue :: EscrowTarget d -> V.Value 
-targetValue = \case 
-  PaymentPubKeyTarget _ vl -> vl 
-  ScriptTarget _ _ vl      -> vl
+targetValue :: EscrowTarget -> V.Value 
+targetValue (PaymentPubKeyTarget _ vl) = vl 
 
 -- | Create a 'Ledger.TxOut' value for the target
-mkTx :: EscrowTarget LV2.Datum -> Constraints.TxConstraints Action L.PaymentPubKeyHash
-mkTx = \case  
-  PaymentPubKeyTarget pkh vl ->
-    Constraints.mustPayToPubKey pkh vl 
-  ScriptTarget vh dat vl -> 
-    Constraints.mustPayToOtherScriptWithDatumInTx vh dat vl P.<>
-    Constraints.mustIncludeDatumInTx dat
+mkTx :: EscrowTarget -> Constraints.TxConstraints Action L.PaymentPubKeyHash
+mkTx (PaymentPubKeyTarget pkh vl) = Constraints.mustPayToPubKey pkh vl 
 
 -- ---------------------------------------------------------------------- 
 -- Redeemer
@@ -148,36 +135,22 @@ instance V2UtilsTypeScripts.ValidatorTypes Escrow where
 --   poisoning the contract by adding arbitrary outputs to the script address.
 
 {-# INLINABLE meetsTarget #-}
-meetsTarget :: LV2.TxInfo -> EscrowTarget LV2.DatumHash -> Bool 
-meetsTarget txInfo = \case 
-  -- True if TxInfo pays target value to pkh
-  PaymentPubKeyTarget pkh vl -> 
+meetsTarget :: LV2.TxInfo -> EscrowTarget -> Bool 
+meetsTarget txInfo (PaymentPubKeyTarget pkh vl) = 
     LV2Ctx.valuePaidTo txInfo (L.unPaymentPubKeyHash pkh) `V.geq` vl
 
-  -- scriptOutputsAt: 
-  -- Get the list if TxOut outputs of the pending tx at a given script address.
-  ScriptTarget vh dataValue vl ->
-    case LV2Ctx.scriptOutputsAt vh txInfo of 
-      -- We expect one output to the given script address
-      [(outDat, vl')] ->
-        case outDat of 
-          LV2.OutputDatumHash dh -> 
-               traceIfFalse "dataValue" (dh == dataValue)
-            && traceIfFalse "value"     (vl' `V.geq` vl)
-          _ -> False
-      _ -> False
-
 {-# INLINEABLE validate #-}
-validate :: EscrowParams LV2.DatumHash -> L.PaymentPubKeyHash -> Action -> LV2.ScriptContext -> Bool 
+validate :: EscrowParams -> L.PaymentPubKeyHash -> Action -> LV2.ScriptContext -> Bool 
 validate EscrowParams{escrowDeadline, escrowTargets} contributor action 
          LV2.ScriptContext{scriptContextTxInfo} =
   case action of 
 
     -- Validate tx that pays to escrow targets
     Redeem -> 
-         traceIfFalse "escrowDeadline-after" (escrowDeadline `I.after` LV2.txInfoValidRange scriptContextTxInfo)
+         traceIfFalse "escrowDeadline-after" 
+          (escrowDeadline `I.after` LV2.txInfoValidRange scriptContextTxInfo)
       && traceIfFalse "meetsTarget" (all (meetsTarget scriptContextTxInfo) escrowTargets)
-      
+     
     -- Send funds back to contributor
     Refund -> 
          traceIfFalse "escrowDeadline-before" ((escrowDeadline - 1) `I.before` LV2.txInfoValidRange scriptContextTxInfo)
@@ -187,20 +160,20 @@ validate EscrowParams{escrowDeadline, escrowTargets} contributor action
 -- Boilerplate
 -- ---------------------------------------------------------------------- 
 
-typedValidator :: EscrowParams LV2.Datum -> V2UtilsTypeScripts.TypedValidator Escrow
-typedValidator escrow = go (P.fmap L.datumHash escrow) where 
-  go = V2UtilsTypeScripts.mkTypedValidatorParam @Escrow 
-         $$(PlutusTx.compile [|| validate ||])
-         $$(PlutusTx.compile [|| wrap ||])
-  wrap = V2UtilsTypeScripts.mkUntypedValidator
+typedValidator :: EscrowParams -> V2UtilsTypeScripts.TypedValidator Escrow
+typedValidator escrow = V2UtilsTypeScripts.mkTypedValidator @Escrow 
+    ($$(PlutusTx.compile [|| validate ||]) `PlutusTx.applyCode` PlutusTx.liftCode escrow)
+     $$(PlutusTx.compile [|| wrap ||])
+  where
+    wrap = V2UtilsTypeScripts.mkUntypedValidator
 
-escrowValidator :: EscrowParams LV2.Datum -> LV2.Validator 
+escrowValidator :: EscrowParams -> LV2.Validator 
 escrowValidator = Scripts.validatorScript . typedValidator
 
-escrowValidatorHash :: EscrowParams LV2.Datum -> LV2.ValidatorHash
+escrowValidatorHash :: EscrowParams -> LV2.ValidatorHash
 escrowValidatorHash = V2UtilsTypeScripts.validatorHash . typedValidator
 
-escrowAddress :: EscrowParams LV2.Datum -> L.Address 
+escrowAddress :: EscrowParams -> L.Address 
 escrowAddress = V1LAddress.scriptHashAddress . escrowValidatorHash
 
 -- ---------------------------------------------------------------------- 

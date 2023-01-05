@@ -1,12 +1,12 @@
 {-# LANGUAGE AllowAmbiguousTypes           #-}
 {-# LANGUAGE DataKinds                     #-}
 {-# LANGUAGE DeriveAnyClass                #-}
---{-# LANGUAGE DeriveGeneric                 #-}
+{-# LANGUAGE DeriveGeneric                 #-}
 {-# LANGUAGE DerivingStrategies            #-}
 {-# LANGUAGE FlexibleContexts              #-}
 {-# LANGUAGE ImportQualifiedPost           #-}
 {-# LANGUAGE MultiParamTypeClasses         #-}
---{-# LANGUAGE NamedFieldPuns                #-}
+{-# LANGUAGE NamedFieldPuns                #-}
 {-# LANGUAGE NoImplicitPrelude             #-}
 {-# LANGUAGE PartialTypeSignatures         #-}
 {-# LANGUAGE ScopedTypeVariables           #-}
@@ -16,7 +16,6 @@
 {-# LANGUAGE OverloadedStrings             #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving    #-}
 {-# LANGUAGE UndecidableInstances          #-}
---{-# LANGUAGE TemplateHaskell               #-}
 
 {-# OPTIONS_GHC -fno-warn-unused-imports                     #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns                   #-}
@@ -30,6 +29,7 @@ import Control.Monad                  (void, when)
 import Control.Monad.Error.Lens       (throwing)
 import Data.Aeson                     (FromJSON, ToJSON)
 import Data.Map                       qualified as Map
+import Data.Text                      qualified as T
 import GHC.Generics                   (Generic)
 
 import PlutusTx                       qualified
@@ -70,7 +70,7 @@ type EscrowSchema =
 
 escrowContract 
     :: (PC.AsContractError e) 
-    => EscrowParams LV2.Datum 
+    => EscrowParams 
     -> PC.Contract () EscrowSchema e ()
 escrowContract escrowParams = 
   let inst = OnChain.typedValidator escrowParams
@@ -78,9 +78,9 @@ escrowContract escrowParams =
         _ <- pay inst escrowParams vl 
         _ <- PC.awaitTime $ escrowDeadline escrowParams
         refund inst escrowParams
-  in PC.selectList 
-      [ void payAndRefund
-      , void $ redeemEp escrowParams
+  in PC.selectList
+      [ void payAndRefund 
+      , void $ redeemEp escrowParams  -- @"redeem-escrow"
       ]
 
 -- ---------------------------------------------------------------------- 
@@ -91,7 +91,7 @@ escrowContract escrowParams =
 payEp 
     :: forall w s e. 
        (PC.AsContractError e, PC.HasEndpoint "pay-escrow" V.Value s)
-    => EscrowParams LV2.Datum 
+    => EscrowParams
     -> PC.Promise w s e LV2.TxId
 payEp escrowParams = 
   endpoint @"pay-escrow" $ pay (OnChain.typedValidator escrowParams) escrowParams
@@ -100,7 +100,7 @@ payEp escrowParams =
 pay 
     :: forall w s e. (PC.AsContractError e)
     => V2UtilsTypeScripts.TypedValidator OnChain.Escrow  -- The instance
-    -> EscrowParams LV2.Datum                            -- The escrow contract 
+    -> EscrowParams                                      -- The escrow contract params
     -> V.Value                                           -- How much money to pay in 
     -> PC.Contract w s e LV2.TxId                        -- Submitted tx id
 pay inst escrowParams vl = do 
@@ -121,7 +121,7 @@ pay inst escrowParams vl = do
 redeemEp 
     :: forall w s e. 
     (PC.AsContractError e, PC.HasEndpoint "redeem-escrow" () s)
-    => EscrowParams LV2.Datum 
+    => EscrowParams 
     -> PC.Promise w s e () 
 redeemEp escrowParams = PC.endpoint @"redeem-escrow" $ \() -> 
   let inst = OnChain.typedValidator escrowParams
@@ -132,7 +132,7 @@ redeemEp escrowParams = PC.endpoint @"redeem-escrow" $ \() ->
 redeem 
     :: forall w s e. PC.AsContractError e 
     => V2UtilsTypeScripts.TypedValidator OnChain.Escrow 
-    -> EscrowParams LV2.Datum
+    -> EscrowParams
     -> PC.Contract w s e () 
 redeem inst escrowParams = do 
   -- Get script address and current time
@@ -157,7 +157,8 @@ redeem inst escrowParams = do
     -- Continue if script address holds sufficient funds
     when (not insufficientFunds) $ do
       let 
-        validityTimeRange = I.to (P.pred $ P.pred $ OnChain.escrowDeadline escrowParams)
+        -- Note: Minus 1 necessary for on-script validation to pass
+        validityTimeRange = I.to $ OnChain.escrowDeadline escrowParams - 1
         tx = Constraints.collectFromTheScript unspentOutputs OnChain.Redeem
           <> foldMap mkTx (OnChain.escrowTargets escrowParams) 
           <> Constraints.mustValidateIn validityTimeRange
@@ -176,7 +177,7 @@ redeem inst escrowParams = do
 refundEp
     :: forall w s e. 
        (PC.AsContractError e, PC.HasEndpoint "refund-escrow" () s)
-    => EscrowParams LV2.Datum
+    => EscrowParams
     -> PC.Promise w s e () 
 refundEp escrowParams = PC.endpoint @"refund-escrow" $ \() -> 
   let inst = OnChain.typedValidator escrowParams
@@ -186,7 +187,7 @@ refundEp escrowParams = PC.endpoint @"refund-escrow" $ \() ->
 refund
     :: forall w s e. (PC.AsContractError e) => 
        V2UtilsTypeScripts.TypedValidator OnChain.Escrow 
-    -> EscrowParams LV2.Datum 
+    -> EscrowParams
     -> PC.Contract w s e () 
 refund inst escrow = do 
   -- Get script outputs and pkh
@@ -200,7 +201,7 @@ refund inst escrow = do
   let flt _ ciTxOut = has (LTx.decoratedTxOutScriptDatum . _1 . only pkh) ciTxOut 
       tx' = Constraints.collectFromTheScriptFilter flt unspentOutputs OnChain.Refund
          <> Constraints.mustBeSignedBy pk 
-         <> Constraints.mustValidateIn (L.from (OnChain.escrowDeadline escrow))
+         <> Constraints.mustValidateIn (L.from $ OnChain.escrowDeadline escrow)
 
   -- Submit transaction if it modifies the UTXO set
   let txModifiesUtxoSet = Constraints.modifiesUtxoSet tx'
@@ -224,7 +225,8 @@ refund inst escrow = do
 --   specified targets if enough funds were deposited before the deadline,
 --   or reclaim the contribution if the goal has not been met.
 payRedeemRefund
-    :: forall w s e. (PC.AsContractError e) => EscrowParams LV2.Datum 
+    :: forall w s e. (PC.AsContractError e) 
+    => EscrowParams
     -> V.Value 
     -> PC.Contract w s e ()
 payRedeemRefund params vl = do 
