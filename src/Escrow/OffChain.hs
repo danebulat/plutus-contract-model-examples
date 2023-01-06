@@ -147,8 +147,8 @@ redeem inst escrowParams = do
   -- Continue if deadline not passed
   when (not deadlinePassed) $ do 
     let outputList = Map.elems unspentOutputs
-        totalVal   = foldr (\o acc -> o ^. LTx.decoratedTxOutValue <> acc) mempty outputList
-        
+        totalVal = foldr (\o acc -> o ^. LTx.decoratedTxOutValue <> acc) mempty outputList
+     
     -- Check enough funds are at the address
     let insufficientFunds = totalVal `V.lt` targetTotal escrowParams
     when insufficientFunds $ do

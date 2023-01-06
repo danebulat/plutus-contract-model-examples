@@ -257,14 +257,14 @@ instance CM.ContractModel GameModel where
           CM.delay 2
 
   -- Enable QuickCheck to shrink counter examples.
-  shrinkAction _s (Lock w1 w2 secret val) =
+  shrinkAction _ (Lock w1 w2 secret val) =
     [Lock w' w2 secret  val  | w'   <- shrinkWallet w1] ++
     [Lock w1 w'' secret val  | w''  <- shrinkWallet w2] ++
     [Lock w1 w2 secret  val' | val' <- shrink val]
-  shrinkAction _s (Give w1 w2) =
+  shrinkAction _ (Give w1 w2) =
     [Give w' w2  | w'  <- shrinkWallet w1] ++
     [Give w1 w'' | w'' <- shrinkWallet w2]
-  shrinkAction _s (Guess w1 w2 old new val) =
+  shrinkAction _ (Guess w1 w2 old new val) =
     [Guess w' w2  old new val  | w'   <- shrinkWallet w1] ++
     [Guess w1 w'' old new val  | w''  <- shrinkWallet w2] ++
     [Guess w1 w2  old new val' | val' <- shrink val]
