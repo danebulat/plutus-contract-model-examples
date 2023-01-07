@@ -16,6 +16,7 @@
 {-# LANGUAGE TypeApplications      #-}
 {-# LANGUAGE TypeFamilies          #-}
 {-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE TupleSections         #-}
 
 {-# OPTIONS_GHC -fno-warn-unused-imports   #-}
 {-# OPTIONS_GHC -fwarn-incomplete-patterns #-}
@@ -57,8 +58,7 @@ import Escrow.OffChain                    qualified as OffChain
 import Escrow.OffChain                    ( EscrowSchema )
 import Escrow.OnChain                     qualified as OnChain 
 import Escrow.OnChain                     ( EscrowParams(..), EscrowTarget(..)
-                                          , payToPubKeyTarget
-                                          )
+                                          , payToPubKeyTarget )
 
 {-
  - IMPORTANT:
@@ -80,8 +80,8 @@ testWallets = [w1, w2, w3, w4, w5]
 
 -- w1 will receive a payout of 10 Ada 
 -- w2 will receive a payout of 20 Ada
-escrowParams :: EscrowParams 
-escrowParams = EscrowParams
+escrowParams' :: EscrowParams 
+escrowParams' = EscrowParams
   { escrowDeadline = TimeSlot.slotToEndPOSIXTime def 30 
   , escrowTargets  = 
     [ payToPubKeyTarget (mockWalletPaymentPubKeyHash w1) (Ada.lovelaceValueOf 10_000_000)
@@ -89,28 +89,42 @@ escrowParams = EscrowParams
     ]
   }
 
+escrowParams :: [(Wallet, Integer)] -> EscrowParams
+escrowParams tgts = 
+  EscrowParams 
+    { escrowTargets = 
+        [ payToPubKeyTarget (mockWalletPaymentPubKeyHash w) (Ada.lovelaceValueOf n)
+        | (w, n) <- tgts
+        ]
+    , escrowDeadline = TimeSlot.slotToEndPOSIXTime def 30
+    }
+
 -- ---------------------------------------------------------------------- 
 -- Test Contract
 -- ---------------------------------------------------------------------- 
 
 -- Contract that allows us to invoke endpoints repeatedly
-testContract :: (PC.AsContractError e) => PC.Contract () EscrowSchema e ()
-testContract = 
+testContract :: EscrowParams -> (PC.AsContractError e) => PC.Contract () EscrowSchema e ()
+testContract params = 
   PC.selectList 
-    [ void $ OffChain.payEp    escrowParams 
-    , void $ OffChain.redeemEp escrowParams
-    , void $ OffChain.refundEp escrowParams
-    ] >> testContract
+    [ void $ OffChain.payEp    params 
+    , void $ OffChain.redeemEp params
+    , void $ OffChain.refundEp params
+    ] >> testContract params
 
 -- ---------------------------------------------------------------------- 
 -- Model
 -- ---------------------------------------------------------------------- 
+
+data Phase = Initial | Running 
+  deriving (Eq, Show, Data)
 
 data EscrowModel = EscrowModel
   { _contributions :: Map Wallet V.Value
   , _targets       :: Map Wallet V.Value
   , _deadline      :: Integer 
   , _numOutputs    :: Integer
+  , _phase         :: Phase
   } deriving (Eq, Show, Data)
 
 makeLenses ''EscrowModel
@@ -127,11 +141,17 @@ instance CM.ContractModel EscrowModel where
   
   -- Define contract instance keys
   data ContractInstanceKey EscrowModel w s e params where 
-    WalletKey :: Wallet -> CM.ContractInstanceKey EscrowModel () EscrowSchema T.Text ()
+    WalletKey :: Wallet 
+              -> CM.ContractInstanceKey EscrowModel () EscrowSchema T.Text EscrowParams 
 
-  -- Make all wallets start the contract pointed to by WalletKey
+  -- Start instances dynamically using `startInstances`
   initialInstances :: [CM.StartContract EscrowModel]
-  initialInstances = [CM.StartContract (WalletKey w) () | w <- testWallets]
+  initialInstances = []
+
+  -- Initialise a randomly generated parameter to pass to the actual contract
+  startInstances _ (Init wns) = 
+    [ CM.StartContract (WalletKey w) (escrowParams wns) | w <- testWallets ]
+  startInstances _ _ = []
 
   -- Return wallet that runs the contract identified by the key
   instanceWallet :: CM.ContractInstanceKey EscrowModel w s e p -> Wallet 
@@ -143,24 +163,35 @@ instance CM.ContractModel EscrowModel where
       -> CM.ContractInstanceKey EscrowModel w s e p 
       -> p
       -> PC.Contract w s e ()
-  instanceContract _ WalletKey{} _ = testContract
+  instanceContract _ WalletKey{} params = testContract params
 
   -- -------
   -- Actions
   -- -------
 
   data Action EscrowModel = 
-      Pay    Wallet Integer 
+      Init   [(Wallet, Integer)]
+    | Pay    Wallet Integer 
     | Redeem Wallet 
     | Refund Wallet
     deriving (Eq, Show, Data)
 
   arbitraryAction :: CM.ModelState EscrowModel -> Gen (CM.Action EscrowModel)
-  arbitraryAction _ = frequency 
-    [ (3, Pay    <$> elements testWallets <*> choose (2_000_000, 30_000_000))
-    , (1, Redeem <$> elements testWallets)
-    , (1, Refund <$> elements testWallets)
-    ]
+  arbitraryAction s 
+    -- Generate an `Init` action only once at the start of a test
+    | s ^. CM.contractState . phase == Initial = Init <$> arbitraryTargets
+    | otherwise = 
+      -- Generate `Redeem` action only when contributed value >= target value
+      frequency $ 
+        [ (3, Pay <$> elements testWallets <*> choose (2_000_000, 30_000_000))
+        , (1, Refund <$> elements testWallets) 
+        ] ++
+        [ (1, Redeem <$> elements testWallets) | cv `V.geq` tv ]
+    where 
+      cs = s ^. CM.contractState . contributions
+      ts = s ^. CM.contractState . targets
+      cv = foldr (<>) mempty (snd <$> Map.toList cs)
+      tv = foldr (<>) mempty (snd <$> Map.toList ts)
 
   -- ------------------
   -- Performing Actions
@@ -168,6 +199,9 @@ instance CM.ContractModel EscrowModel where
 
   -- Link actions to the contract to run in the emulator
   perform h _ s a = case a of 
+    -- don't do anything for Init actions
+    Init _ -> do 
+      return ()
 
     -- call @"pay-escrow" endpoint in emulator
     Pay w v -> do 
@@ -197,18 +231,20 @@ instance CM.ContractModel EscrowModel where
   initialState :: EscrowModel 
   initialState = EscrowModel 
     { _contributions = Map.empty 
-    , _targets = Map.fromList 
-        [ (w1, Ada.lovelaceValueOf 10_000_000)
-        , (w2, Ada.lovelaceValueOf 20_000_000)
-        ]
-    , _deadline   = 30 -- slot 100
-    , _numOutputs = 0
+    , _targets       = Map.empty
+    , _deadline      = 30 -- slot 100
+    , _numOutputs    = 0
+    , _phase         = Initial
     }
   
   -- Model how we expect each operation to change the state. 
   -- The Spec monad keeps track of wallets, tokens, and state.
   nextState :: CM.Action EscrowModel -> CM.Spec EscrowModel () 
   nextState a = case a of 
+    Init wns -> do 
+      phase   .= Running 
+      targets .= Map.fromList [(w, Ada.lovelaceValueOf n) | (w, n) <- wns]
+
     Pay w v -> do 
       CM.withdraw w $ Ada.lovelaceValueOf v
       numOutputs %= (+1)
@@ -240,6 +276,7 @@ instance CM.ContractModel EscrowModel where
           CM.wait 2
 
   -- Shrinking
+  shrinkAction _ (Init tgts) = map Init (shrinkList (\(w,n) -> (w,) <$> shrink n) tgts)
   shrinkAction _ (Pay w n) = [Pay w n' | n' <- shrink n]
   shrinkAction _ _         = []
 
@@ -249,18 +286,24 @@ instance CM.ContractModel EscrowModel where
 
   precondition :: CM.ModelState EscrowModel -> CM.Action EscrowModel -> Bool
   precondition s a = case a of 
+    Init tgts -> currentPhase == Initial &&
+                and [Ada.lovelaceValueOf n `V.geq` Ada.toValue L.minAdaTxOut | (w,n) <- tgts]
+
     Redeem w -> let fld = foldr (<>) mempty
-                in fld cs `V.geq` fld ts &&            -- value meets target
-                   curSlot < d           &&            -- deadline not passed
+                in currentPhase == Running && 
+                   fld cs `V.geq` fld ts   &&          -- value meets target
+                   curSlot < d             &&          -- deadline not passed
                    isJust (Map.lookup w ts)            -- wallet must be in targets
 
-    Refund w -> case Map.lookup w cs of 
+    Refund w -> currentPhase == Running  &&
+                case Map.lookup w cs of 
                   Just _  -> curSlot > d &&            -- deadline must pass
                              isJust (Map.lookup w cs)  -- wallet must have contributed
                   Nothing -> False
 
-    Pay _ v  -> curSlot < d          &&
-                outputs < maxOutputs &&
+    Pay _ v  -> currentPhase == Running &&
+                curSlot < d             &&
+                outputs < maxOutputs    &&
                 Ada.lovelaceValueOf v `V.geq` Ada.toValue L.minAdaTxOut 
     where 
       d  = s ^. CM.contractState . deadline
@@ -268,9 +311,20 @@ instance CM.ContractModel EscrowModel where
       ts = s ^. CM.contractState . targets
       outputs = s ^. CM.contractState . numOutputs
       curSlot = L.getSlot $ s ^. CM.currentSlot
+      currentPhase = s ^. CM.contractState . phase 
 
 deriving instance Eq (CM.ContractInstanceKey EscrowModel w s e params)
 deriving instance Show (CM.ContractInstanceKey EscrowModel w s e params)
+
+-- ---------------------------------------------------------------------- 
+-- Generators
+-- ---------------------------------------------------------------------- 
+
+arbitraryTargets :: Gen [(Wallet, Integer)]
+arbitraryTargets = do 
+  ws <- sublistOf testWallets 
+  vs <- infiniteListOf $ choose (2_000_000, 30_000_000)
+  return (zip (take 2 ws) vs)
 
 -- ---------------------------------------------------------------------- 
 -- QuickCheck Properties
