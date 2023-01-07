@@ -80,17 +80,17 @@ trace1 :: Emulator.EmulatorTrace ()
 trace1 = do 
   -- Wallet 1 and 2 will pay to the script address
   h1 <- Emulator.activateContractWallet w1
-           (OffChain.escrowContract escrowParam :: EscrowContract)
+           (OffChain.testContract escrowParam :: EscrowContract)
   h2 <- Emulator.activateContractWallet w2
-           (OffChain.escrowContract escrowParam :: EscrowContract)
+           (OffChain.testContract escrowParam :: EscrowContract)
   h3 <- Emulator.activateContractWallet w3
-           (OffChain.escrowContract escrowParam :: EscrowContract)
+           (OffChain.testContract escrowParam :: EscrowContract)
 
   -- Pay enough funds to contract
-  Emulator.callEndpoint @"pay-escrow" h1 (Ada.lovelaceValueOf 50_000_000)
+  Emulator.callEndpoint @"pay-escrow" h1 (Ada.lovelaceValueOf 10_000_000)
   void $ waitNSlots 2
-  Emulator.callEndpoint @"pay-escrow" h2 (Ada.lovelaceValueOf 25_000_000)
-  void $ waitNSlots 6
+  Emulator.callEndpoint @"pay-escrow" h2 (Ada.lovelaceValueOf 15_000_000)
+  void $ waitNSlots 4
 
   -- Wallet 3 will redeem 
   Emulator.callEndpoint @"redeem-escrow" h3 ()
