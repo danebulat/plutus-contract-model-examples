@@ -106,7 +106,7 @@ payEp
     :: forall w s e. 
        (PC.AsContractError e, PC.HasEndpoint "pay-escrow" V.Value s)
     => EscrowParams
-    -> PC.Promise w s e LV2.TxId
+    -> PC.Promise w s e () --LV2.TxId
 payEp escrowParams = 
   endpoint @"pay-escrow" $ pay (OnChain.typedValidator escrowParams) escrowParams
 
@@ -116,7 +116,7 @@ pay
     => V2UtilsTypeScripts.TypedValidator OnChain.Escrow  -- The instance
     -> EscrowParams                                      -- The escrow contract params
     -> V.Value                                           -- How much money to pay in 
-    -> PC.Contract w s e LV2.TxId                        -- Submitted tx id
+    -> PC.Contract w s e () --LV2.TxId                        -- Submitted tx id
 pay inst escrowParams vl = do 
   pk <- PC.ownFirstPaymentPubKeyHash 
   let tx = Constraints.mustPayToTheScriptWithDatumInTx pk vl
@@ -126,7 +126,8 @@ pay inst escrowParams vl = do
   PC.mkTxConstraints (Constraints.typedValidatorLookups inst) tx
     >>= PC.adjustUnbalancedTx 
     >>= PC.submitUnbalancedTx 
-    >>= return . L.getCardanoTxId
+    >>  PC.logInfo @P.String "Payment submitted to escrow contract"
+    -- >>= return . L.getCardanoTxId
 
 -- ---------------------------------------------------------------------- 
 -- Redeem Endpoint

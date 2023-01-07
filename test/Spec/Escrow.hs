@@ -60,22 +60,29 @@ import Escrow.OnChain                     ( EscrowParams(..), EscrowTarget(..)
                                           , payToPubKeyTarget
                                           )
 
+{-
+ - IMPORTANT:
+ -   The tests have revealed a `redeem` transaction cannot contain more than 
+ -   7 outputs from the script address as inputs. Therefore, the contract model 
+ -   is written such that a total of 7 `Pay` actions can occur in a single 
+ -   test.
+ - -}
+
 -- ---------------------------------------------------------------------- 
 -- Utilities 
 -- ---------------------------------------------------------------------- 
 
+maxOutputs :: Integer 
+maxOutputs = 6
+
 testWallets :: [Wallet]
 testWallets = [w1, w2, w3, w4, w5]
-
--- adaToValue :: Integer -> V.Value
--- adaToValue n = Ada.lovelaceValueOf ((*) n million)
---   where million = 1_000_000
 
 -- w1 will receive a payout of 10 Ada 
 -- w2 will receive a payout of 20 Ada
 escrowParams :: EscrowParams 
 escrowParams = EscrowParams
-  { escrowDeadline = TimeSlot.slotToEndPOSIXTime def 100
+  { escrowDeadline = TimeSlot.slotToEndPOSIXTime def 30 
   , escrowTargets  = 
     [ payToPubKeyTarget (mockWalletPaymentPubKeyHash w1) (Ada.lovelaceValueOf 10_000_000)
     , payToPubKeyTarget (mockWalletPaymentPubKeyHash w2) (Ada.lovelaceValueOf 20_000_000)
@@ -103,6 +110,7 @@ data EscrowModel = EscrowModel
   { _contributions :: Map Wallet V.Value
   , _targets       :: Map Wallet V.Value
   , _deadline      :: Integer 
+  , _numOutputs    :: Integer
   } deriving (Eq, Show, Data)
 
 makeLenses ''EscrowModel
@@ -159,12 +167,17 @@ instance CM.ContractModel EscrowModel where
   -- ------------------
 
   -- Link actions to the contract to run in the emulator
-  perform h _ _ a = case a of 
+  perform h _ s a = case a of 
 
     -- call @"pay-escrow" endpoint in emulator
     Pay w v -> do 
-      Trace.callEndpoint @"pay-escrow" (h $ WalletKey w) (Ada.lovelaceValueOf v)
-      CM.delay 2
+      let outputs = s ^. CM.contractState . numOutputs
+      if outputs < maxOutputs
+        then do 
+          Trace.callEndpoint @"pay-escrow" (h $ WalletKey w) (Ada.lovelaceValueOf v)
+          CM.delay 2
+        else 
+          CM.delay 2
 
     -- call @"redeem-escrow" in the emulator
     Redeem w -> do 
@@ -188,7 +201,8 @@ instance CM.ContractModel EscrowModel where
         [ (w1, Ada.lovelaceValueOf 10_000_000)
         , (w2, Ada.lovelaceValueOf 20_000_000)
         ]
-    , _deadline = 100 -- slot 100
+    , _deadline   = 30 -- slot 100
+    , _numOutputs = 0
     }
   
   -- Model how we expect each operation to change the state. 
@@ -197,6 +211,7 @@ instance CM.ContractModel EscrowModel where
   nextState a = case a of 
     Pay w v -> do 
       CM.withdraw w $ Ada.lovelaceValueOf v
+      numOutputs %= (+1)
       contributions %= Map.insertWith (<>) w (Ada.lovelaceValueOf v)
       CM.wait 2
 
@@ -244,16 +259,48 @@ instance CM.ContractModel EscrowModel where
                              isJust (Map.lookup w cs)  -- wallet must have contributed
                   Nothing -> False
 
-    Pay _ v  -> curSlot < d &&
-                Ada.lovelaceValueOf v `V.geq` Ada.toValue L.minAdaTxOut
+    Pay _ v  -> curSlot < d          &&
+                outputs < maxOutputs &&
+                Ada.lovelaceValueOf v `V.geq` Ada.toValue L.minAdaTxOut 
     where 
       d  = s ^. CM.contractState . deadline
       cs = s ^. CM.contractState . contributions
       ts = s ^. CM.contractState . targets
+      outputs = s ^. CM.contractState . numOutputs
       curSlot = L.getSlot $ s ^. CM.currentSlot
 
 deriving instance Eq (CM.ContractInstanceKey EscrowModel w s e params)
 deriving instance Show (CM.ContractInstanceKey EscrowModel w s e params)
+
+-- ---------------------------------------------------------------------- 
+-- QuickCheck Properties
+-- ---------------------------------------------------------------------- 
+
+testEscrow1 :: Property 
+testEscrow1 = withMaxSuccess 1 . prop_Escrow $ 
+  CM.actionsFromList
+    [ Pay w1 10_000_000
+    ]
+
+testEscrow2 :: Property
+testEscrow2 = withMaxSuccess 1 . prop_Escrow $
+  CM.actionsFromList
+    [ Pay w1 20_000_000
+    , Pay w2 10_000_000
+    , Redeem w1 
+    ]
+
+testEscrow3 :: Property
+testEscrow3 = withMaxSuccess 1 . prop_Escrow $
+  CM.actionsFromList
+    [ Pay w1 20_000_000
+    , Pay w2 10_000_000
+    , Pay w2 3_000_000
+    , Pay w2 2_000_000
+    , Pay w2 2_000_000
+    , Pay w2 2_000_000
+    , Redeem w1
+    ]
 
 -- ---------------------------------------------------------------------- 
 -- Property
