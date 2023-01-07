@@ -106,6 +106,14 @@ targetValue (PaymentPubKeyTarget _ vl) = vl
 mkTx :: EscrowTarget -> Constraints.TxConstraints Action L.PaymentPubKeyHash
 mkTx (PaymentPubKeyTarget pkh vl) = Constraints.mustPayToPubKey pkh vl 
 
+mkTx' :: V.Value -> L.PaymentPubKeyHash -> EscrowTarget -> Constraints.TxConstraints Action L.PaymentPubKeyHash
+mkTx' leftover wpkh (PaymentPubKeyTarget pkh vl)
+  | pkh == wpkh = Constraints.mustPayToPubKey pkh (vl <> leftover)
+  | otherwise   = Constraints.mustPayToPubKey pkh vl
+
+pubKeyTargetPkh :: EscrowTarget -> L.PaymentPubKeyHash
+pubKeyTargetPkh (PaymentPubKeyTarget pkh _) = pkh
+
 -- ---------------------------------------------------------------------- 
 -- Redeemer
 -- ---------------------------------------------------------------------- 

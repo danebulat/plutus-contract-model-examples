@@ -209,17 +209,16 @@ instance CM.ContractModel EscrowModel where
             Map.foldr (<>) mempty contribs <> 
             PlutusTx.negate (Map.foldr (<>) mempty targets')
 
-      -- TODO: Modify off-chain code so wallet receives leftover 
       CM.deposit w leftoverValue
       contributions .= Map.empty
       CM.wait 2
 
     Refund w -> do
-      targets' <- CM.viewContractState targets
-      let mValToRefund = Map.lookup w targets'
+      contribs <- CM.viewContractState contributions
+      let mValToRefund = Map.lookup w contribs
       case mValToRefund of 
         Just v -> do 
-          targets %= Map.delete w
+          contributions %= Map.delete w
           CM.deposit w v 
           CM.wait 2
         Nothing -> 

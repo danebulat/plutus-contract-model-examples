@@ -33,6 +33,7 @@ import Data.Text                      qualified as T
 import GHC.Generics                   (Generic)
 
 import PlutusTx                       qualified
+import PlutusTx.Numeric               qualified as PlutusTx
 import PlutusTx.Prelude               hiding (pure, (<$>))
 import Plutus.V2.Ledger.Api           qualified as LV2
 import Plutus.V2.Ledger.Contexts      qualified as LV2Ctx
@@ -53,7 +54,7 @@ import Plutus.Contract                qualified as PC
 import Plutus.Contract.Error
 
 import Escrow.OnChain                 qualified as OnChain
-import Escrow.OnChain                 (EscrowParams, targetTotal, mkTx, escrowDeadline)
+import Escrow.OnChain                 (EscrowParams, targetTotal, mkTx', escrowDeadline)
 
 -- ---------------------------------------------------------------------- 
 -- Schema
@@ -135,40 +136,51 @@ redeem
     -> EscrowParams
     -> PC.Contract w s e () 
 redeem inst escrowParams = do 
-  -- Get script address and current time
-  unspentOutputs <- PC.utxosAt (OnChain.escrowAddress escrowParams) 
-  current <- snd P.<$> PC.currentNodeClientTimeRange
-  
-  -- Check deadline hasn't passed
-  let deadlinePassed = current >= OnChain.escrowDeadline escrowParams
-  when deadlinePassed $ do 
-    PC.logError @P.String "Deadline Passed" 
+  wpkh <- PC.ownFirstPaymentPubKeyHash
 
-  -- Continue if deadline not passed
-  when (not deadlinePassed) $ do 
-    let outputList = Map.elems unspentOutputs
-        totalVal = foldr (\o acc -> o ^. LTx.decoratedTxOutValue <> acc) mempty outputList
-     
-    -- Check enough funds are at the address
-    let insufficientFunds = totalVal `V.lt` targetTotal escrowParams
-    when insufficientFunds $ do
-      PC.logError @P.String "Not Enough Funds At Address" 
+  -- Confirm this wallet is in the target list
+  let targets  = OnChain.escrowTargets escrowParams
+      isTarget = any (\tgt -> OnChain.pubKeyTargetPkh tgt == pkh) targets
+  unless isTarget $ PC.logError @P.String "Not target wallet"
 
-    -- Continue if script address holds sufficient funds
-    when (not insufficientFunds) $ do
-      let 
-        -- Note: Minus 1 necessary for on-script validation to pass
-        validityTimeRange = I.to $ OnChain.escrowDeadline escrowParams - 1
-        tx = Constraints.collectFromTheScript unspentOutputs OnChain.Redeem
-          <> foldMap mkTx (OnChain.escrowTargets escrowParams) 
-          <> Constraints.mustValidateIn validityTimeRange
-      
-      utx <- PC.mkTxConstraints 
-               (Constraints.typedValidatorLookups inst P.<>
-                Constraints.unspentOutputs unspentOutputs) tx
-      adjusted <- PC.adjustUnbalancedTx utx
-      ledgerTx <- PC.submitUnbalancedTx adjusted
-      PC.logInfo $ "Submitted Tx: " ++ P.show ledgerTx
+  when isTarget $ do
+    -- Get script address and current time
+    unspentOutputs <- PC.utxosAt (OnChain.escrowAddress escrowParams) 
+    current <- snd P.<$> PC.currentNodeClientTimeRange
+    
+    -- Check deadline hasn't passed
+    let deadlinePassed = current >= OnChain.escrowDeadline escrowParams
+    when deadlinePassed $ do 
+      PC.logError @P.String "Deadline Passed" 
+
+    -- Continue if deadline not passed
+    when (not deadlinePassed) $ do 
+      let outputList = Map.elems unspentOutputs
+          totalVal = foldr (\o acc -> o ^. LTx.decoratedTxOutValue <> acc) mempty outputList
+       
+      -- Check enough funds are at the address
+      let insufficientFunds = totalVal `V.lt` targetTotal escrowParams
+      when insufficientFunds $ do
+        PC.logError @P.String "Not Enough Funds At Address" 
+
+      -- Continue if script address holds sufficient funds
+      when (not insufficientFunds) $ do 
+        let 
+          -- Left over value at script address paid to this wallet
+          leftover = totalVal <> PlutusTx.negate (OnChain.targetTotal escrowParams)
+
+          -- Note: Minus 1 necessary for on-script validation to pass
+          validityTimeRange = I.to $ OnChain.escrowDeadline escrowParams - 1
+          tx = Constraints.collectFromTheScript unspentOutputs OnChain.Redeem
+            <> foldMap (mkTx' leftover wpkh) (OnChain.escrowTargets escrowParams)
+            <> Constraints.mustValidateIn validityTimeRange
+        
+        utx <- PC.mkTxConstraints 
+                 (Constraints.typedValidatorLookups inst P.<>
+                  Constraints.unspentOutputs unspentOutputs) tx
+        adjusted <- PC.adjustUnbalancedTx utx
+        ledgerTx <- PC.submitUnbalancedTx adjusted
+        PC.logInfo $ "Submitted Tx: " ++ P.show ledgerTx
 
 -- ---------------------------------------------------------------------- 
 -- Refund Endpoint 

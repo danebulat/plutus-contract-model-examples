@@ -87,7 +87,7 @@ trace1 = do
            (OffChain.escrowContract escrowParam :: EscrowContract)
 
   -- Pay enough funds to contract
-  Emulator.callEndpoint @"pay-escrow" h1 (Ada.lovelaceValueOf 20_000_000)
+  Emulator.callEndpoint @"pay-escrow" h1 (Ada.lovelaceValueOf 50_000_000)
   void $ waitNSlots 2
   Emulator.callEndpoint @"pay-escrow" h2 (Ada.lovelaceValueOf 25_000_000)
   void $ waitNSlots 6
