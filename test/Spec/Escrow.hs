@@ -149,6 +149,12 @@ instance CM.ContractModel EscrowModel where
   initialInstances = []
 
   -- Initialise a randomly generated parameter to pass to the actual contract
+  -- The `Init` action will run only once, and makes each wallet run the escrow 
+  -- contract.
+  startInstances 
+      :: CM.ModelState EscrowModel 
+      -> CM.Action EscrowModel 
+      -> [CM.StartContract EscrowModel]
   startInstances _ (Init wns) = 
     [ CM.StartContract (WalletKey w) (escrowParams wns) | w <- testWallets ]
   startInstances _ _ = []
@@ -355,6 +361,46 @@ testEscrow3 = withMaxSuccess 1 . prop_Escrow $
     , Pay w2 2_000_000
     , Redeem w1
     ]
+
+-- ---------------------------------------------------------------------- 
+-- Dynamic Logic Tests
+-- ---------------------------------------------------------------------- 
+
+-- Using DL monad to test "no-locked funds" properties.
+
+finishEscrow :: CM.DL EscrowModel ()
+finishEscrow = do 
+  CM.action $ Init [(w1, 10_000_000),(w2, 20_000_000)]
+  CM.anyActions_ 
+  finishingStrategy w1
+  CM.assertModel "Locked funds are not zero" (CM.symIsZero . CM.lockedValue)
+
+finishingStrategy :: Wallet -> CM.DL EscrowModel ()
+finishingStrategy w = do 
+  currentPhase <- CM.viewContractState phase 
+  when (currentPhase /= Initial) $ do 
+    currentTargets <- CM.viewContractState targets 
+    currentContribs <- CM.viewContractState contributions 
+    let deficit = foldr (<>) mempty currentTargets <> 
+                  PlutusTx.negate (foldr (<>) mempty currentContribs)
+    when (deficit `V.gt` Ada.lovelaceValueOf 0) $ do
+      let toPay = max (Ada.getLovelace $ Ada.fromValue deficit) 
+                      (Ada.getLovelace L.minAdaTxOut)
+      CM.action $ Pay w toPay
+      CM.action $ Redeem w
+
+-- We could write a test scenario that fixes the escrow targets 
+-- NOTE: Generated actions are always appropriate for the current state.
+fixedTargets :: CM.DL EscrowModel ()
+fixedTargets = do 
+  CM.action $ Init [(w1, 10_000_000),(w2, 20_000_000)]
+  CM.anyActions_
+
+-- Specify how to perform the DL tests. Usually, we just reuse the 
+-- existing property we have already written, which runs the tests in 
+-- the emulator and performs the usual checks.
+prop_FinishEscrow :: Property 
+prop_FinishEscrow = CM.forAllDL finishEscrow prop_Escrow
 
 -- ---------------------------------------------------------------------- 
 -- Property

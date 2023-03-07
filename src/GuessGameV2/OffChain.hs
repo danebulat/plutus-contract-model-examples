@@ -228,7 +228,7 @@ findSecretWordValue :: Map L.TxOutRef LTx.DecoratedTxOut -> Maybe OnChain.Hashed
 findSecretWordValue = 
   listToMaybe . catMaybes . Map.elems . Map.map secretWordValue
 
--- Extract the secret word in the Datum of a given transaction output output
+-- Extract the secret word in the Datum of a given transaction output 
 secretWordValue :: LTx.DecoratedTxOut -> Maybe OnChain.HashedString
 secretWordValue o = do 
   LV2.Datum d <- o ^? LTx.decoratedTxOutDatum . _2 . LTx.datumInDatumFromQuery 

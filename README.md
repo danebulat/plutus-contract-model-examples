@@ -75,7 +75,6 @@ nix-shell
 
 Within `nix-shell`, clone this repository somewhere on your filesystem and build the project.
 
-
 ```
 # Step outside plutus-apps directory
 cd ..

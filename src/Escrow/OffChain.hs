@@ -116,7 +116,7 @@ pay
     => V2UtilsTypeScripts.TypedValidator OnChain.Escrow  -- The instance
     -> EscrowParams                                      -- The escrow contract params
     -> V.Value                                           -- How much money to pay in 
-    -> PC.Contract w s e () --LV2.TxId                        -- Submitted tx id
+    -> PC.Contract w s e () --LV2.TxId  
 pay inst escrowParams vl = do 
   pk <- PC.ownFirstPaymentPubKeyHash 
   let tx = Constraints.mustPayToTheScriptWithDatumInTx pk vl

@@ -39,7 +39,7 @@ import Prelude                        qualified as P
 import Plutus.Script.Utils.V2.Typed.Scripts.Validators qualified as V2UtilsTypeScripts
 import Plutus.Script.Utils.V2.Typed.Scripts            qualified as Scripts
 import Plutus.Script.Utils.V2.Scripts                  (scriptCurrencySymbol)
---
+
 -- Coverage
 import PlutusTx.Code                  (getCovIdx)
 import PlutusTx.Coverage              (CoverageIndex)
@@ -58,7 +58,7 @@ data GameParam = GameParam
   { gpCreator   :: L.Address      -- wallet locking funds 
   , gpStartTime :: LV2.POSIXTime  -- starting time of game
   } 
-  deriving (P.Show, Generic)
+  deriving stock (P.Show, Generic)
   deriving anyclass (ToJSON, FromJSON, ToSchema)
 
 PlutusTx.unstableMakeIsData ''GameParam
@@ -81,7 +81,7 @@ data Dat = Dat
   { datMintingPolicyHash :: LV2.MintingPolicyHash  -- guess token policy hash
   , datTokenName         :: LV2.TokenName          -- guess token name
   , datSecret            :: HashedString           -- hash of secret
-  } deriving (P.Eq, P.Show)
+  } deriving stock (P.Eq, P.Show)
 
 instance Eq Dat where 
   Dat mph tn s == Dat mph' tn' s' = 

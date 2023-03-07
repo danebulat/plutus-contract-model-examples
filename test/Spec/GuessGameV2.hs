@@ -164,7 +164,6 @@ instance CM.ContractModel GameModel where
         CM.withdraw w1 minLovelace 
         CM.deposit  w1 $ Ada.lovelaceValueOf valToExtract 
         CM.transfer w1 w2 $ V.assetClassValue guessToken 1 <> minLovelace
-
         CM.wait 2
       else 
         CM.wait 2
@@ -320,7 +319,7 @@ guessToken :: V.AssetClass
 guessToken = V.AssetClass (guessTokenCurrency, guessTokenName) 
 
 minLovelace :: V.Value
-minLovelace = Ada.lovelaceValueOf (Ada.getLovelace  L.minAdaTxOut)
+minLovelace = Ada.lovelaceValueOf (Ada.getLovelace L.minAdaTxOut)
 
 -- ---------------------------------------------------------------------- 
 -- Generators (for actions)
@@ -472,3 +471,5 @@ noLockedFunds = do
 runDL :: IO ()
 runDL = quickCheck . withMaxSuccess 1 $ propDL noLockedFunds
 
+runDL' :: CM.DL GameModel () -> IO ()
+runDL' dl = quickCheck . withMaxSuccess 1 $ propDL dl 
