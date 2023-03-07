@@ -4,15 +4,9 @@ version:            0.1.0.0
 stability:          experimental
 author:             Dane Bulat
 
--- A short (one-line) description of the package.
 -- synopsis:
-
--- A longer description of the package.
 -- description:
-
--- A URL where users can report bugs.
 -- bug-reports:
-
 
 -- A copyright notice.
 -- copyright:
@@ -50,15 +44,15 @@ library
 
     -- Plutus dependencies
     build-depends:
-      playground-common -any,
-      plutus-contract -any,
-      plutus-chain-index-core -any,
-      plutus-ledger -any,
-      plutus-ledger-api -any,
-      plutus-ledger-constraints -any,
-      plutus-tx -any,
-      plutus-tx-plugin -any,
-      plutus-script-utils -any,
+      playground-common         ==1.0.0.0,
+      plutus-contract           ==1.0.0.0,
+      plutus-chain-index-core   ==1.0.0.0,
+      plutus-ledger             ==1.0.0.0,
+      plutus-ledger-api         ==1.0.0.0,
+      plutus-ledger-constraints ==1.0.0.0,
+      plutus-tx                 ==1.0.0.0,
+      plutus-tx-plugin          ==1.0.0.0,
+      plutus-script-utils       ==1.0.0.0,
       cardano-api, 
       cardano-binary,
       data-default,
@@ -110,11 +104,11 @@ test-suite tests
       text,
       
       plutus-contract-model-examples,
-      plutus-contract     -any,
-      plutus-ledger       -any,
-      plutus-ledger-api   -any,
-      plutus-script-utils -any,
-      plutus-tx           -any,
+      plutus-contract     ==1.0.0.0,
+      plutus-ledger       ==1.0.0.0,
+      plutus-ledger-api   ==1.0.0.0,
+      plutus-script-utils ==1.0.0.0,
+      plutus-tx           ==1.0.0.0,
 
       -- playground-common -any,
       -- plutus-chain-index-core -any,
